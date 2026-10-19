@@ -1,0 +1,6 @@
+[submodule "libs/v2x-misc"]
+	path = libs/v2x-misc
+	url = https://github.com/gustavovonn/v2x-misc.git
+[submodule "libs/eigen"]
+	path = libs/eigen
+	url = https://gitlab.com/libeigen/eigen.git

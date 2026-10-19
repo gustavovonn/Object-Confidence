@@ -20,18 +20,19 @@ std::vector<VectorRecord> ObjectConfidenceEngine::onMotionVectors(const std::vec
 {
     MaybeStage whole(m_timer, "onMotionVectors");
 
+    {
+        MaybeStage s(m_timer, "1 retire");
+        for (uint64_t id : m_tracker.retireStaleTracks(now)) {
+            m_scorer.forget(id);
+        }
+    }
+
     std::vector<VectorRecord> out;
     out.reserve(vectors.size());
     for (const MotionVector& v : vectors) {
         out.push_back(process(v, receiver));
     }
 
-    {
-        MaybeStage s(m_timer, "6 retire");
-        for (uint64_t id : m_tracker.retireStaleTracks(now)) {
-            m_scorer.forget(id);
-        }
-    }
     return out;
 }
 

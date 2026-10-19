@@ -12,14 +12,14 @@ come from `libs/Artery-Dataset-Generator` (submodule).
 
 ```
 onMotionVectors(vectors, receiver, now)        per vector:
-  1 plausibilityCheck     finite values
-  2 project + associate   tracks moved to the vector time (UKF predict, not committed);
+  1 retireStaleTracks     once per call
+  2 plausibilityCheck     finite values
+  3 project + associate   tracks moved to the vector time (UKF predict, not committed);
                           bound (author, objectId) keeps its track, else nearest track in the gate
-  3 checks                consistency against the source's last report (paper 1);
+  4 checks                consistency against the source's last report (paper 1);
                           position residual <= gate
-  4 kalmanUpdate          only if 3 passed
-  5 score                 passed: hit, failed: miss
-  6 retireStaleTracks     once per call
+  5 kalmanUpdate          only if 3 passed
+  6 score                 passed: hit, failed: miss
 ```
 
 | Piece | Choice | Reference |

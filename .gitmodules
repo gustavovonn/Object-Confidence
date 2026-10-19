@@ -4,3 +4,6 @@
 [submodule "libs/eigen"]
 	path = libs/eigen
 	url = https://gitlab.com/libeigen/eigen.git
+[submodule "libs/Artery-Dataset-Generator"]
+	path = libs/Artery-Dataset-Generator
+	url = https://github.com/gustavovonn/Artery-Dataset-Generator.git

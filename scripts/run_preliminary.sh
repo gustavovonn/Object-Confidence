@@ -3,7 +3,6 @@
 # no sensor errors, replayed through the engine.
 # Fault parameters: libs/Artery-Dataset-Generator/config/faults.toml, `types` replaced per subset.
 # Usage: scripts/run_preliminary.sh [groundtruth dir] [output dir]
-# GENERATOR overrides the generator checkout (default: the libs/ submodule)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

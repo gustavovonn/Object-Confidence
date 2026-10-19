@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Minimal preliminary result: per-fault AUC table and one confidence-over-time figure.
+"""Minimal preliminary result: per-fault detection table and one confidence-over-time figure.
 
 Usage: evaluate.py [results/preliminary]
 Reads <dir>/<fault type>/records.csv (scripts/run_preliminary.sh) and writes
 <dir>/table.md and <dir>/confidence_over_time.png (needs matplotlib, requirements.txt).
 
-A track (one receiver, one trackId) is faulty when most of its vectors carry an attackType.
-Its score is the mean confidence over its vectors. AUC = P(score honest > score faulty),
-honest and faulty tracks taken from the same subset.
+Metrics as paper 1 (Beacon-Confidence, detection-eval/scripts/run_scorer_comparison.py):
+one decision per received vector, flagged when the confidence of its track after the vector
+is below 0.5; positive when the vector's content was falsified (attackType > 0).
+Precision, recall, FPR and accuracy in %, F1 in [0, 1]; counts summed over the subset.
 """
-import bisect
 import csv
 import sys
 from collections import Counter, defaultdict
@@ -37,31 +37,41 @@ def is_faulty(vectors):
     return sum(1 for v in vectors if v["attackType"] != "0") > len(vectors) / 2
 
 
-def score(vectors):
-    return sum(float(v["confidence"]) for v in vectors) / len(vectors)
+THRESHOLD = 0.5
 
 
-def auc(positive, negative):
-    """Mann-Whitney: probability that a positive scores above a negative, ties count half."""
-    ranked = sorted(negative)
-    wins = 0.0
-    for p in positive:
-        below = bisect.bisect_left(ranked, p)
-        wins += below + 0.5 * (bisect.bisect_right(ranked, p) - below)
-    return wins / (len(positive) * len(negative))
+def counts(rows):
+    tp = fp = tn = fn = 0
+    for r in rows:
+        if r["outcome"] == "dropped":
+            continue
+        flagged = float(r["confidence"]) < THRESHOLD
+        faulty = r["attackType"] != "0"
+        tp += flagged and faulty
+        fp += flagged and not faulty
+        tn += not flagged and not faulty
+        fn += not flagged and faulty
+    return tp, fp, tn, fn
+
+
+def metrics(tp, fp, tn, fn):
+    precision = 100.0 * tp / (tp + fp) if tp + fp else 0.0
+    recall = 100.0 * tp / (tp + fn) if tp + fn else 0.0
+    fpr = 100.0 * fp / (fp + tn) if fp + tn else 0.0
+    accuracy = 100.0 * (tp + tn) / (tp + fp + tn + fn)
+    f1 = 2 * precision * recall / (precision + recall) / 100.0 if precision + recall else 0.0
+    return f1, fpr, accuracy, precision, recall
 
 
 def table(root):
-    lines = ["| Fault | honest tracks | faulty tracks | AUC |", "|---|---|---|---|"]
-    all_honest, all_faulty = [], []
+    lines = ["| Fault | F1 | FPR (%) | Accuracy (%) | Precision (%) | Recall (%) |",
+             "|---|---|---|---|---|---|"]
+    total = [0, 0, 0, 0]
     for kind in TYPES:
-        tracks = tracks_of(load(root / kind / "records.csv")).values()
-        honest = [score(t) for t in tracks if not is_faulty(t)]
-        faulty = [score(t) for t in tracks if is_faulty(t)]
-        all_honest += honest
-        all_faulty += faulty
-        lines.append(f"| {kind} | {len(honest)} | {len(faulty)} | {auc(honest, faulty):.3f} |")
-    lines.append(f"| **all, pooled** | {len(all_honest)} | {len(all_faulty)} | {auc(all_honest, all_faulty):.3f} |")
+        c = counts(load(root / kind / "records.csv"))
+        total = [a + b for a, b in zip(total, c)]
+        lines.append("| {} | {:.4f} | {:.2f} | {:.2f} | {:.2f} | {:.2f} |".format(kind, *metrics(*c)))
+    lines.append("| **all** | {:.4f} | {:.2f} | {:.2f} | {:.2f} | {:.2f} |".format(*metrics(*total)))
     return "\n".join(lines) + "\n"
 
 

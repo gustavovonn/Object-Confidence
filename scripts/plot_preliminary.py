@@ -2,8 +2,12 @@
 """Figures and tables of the preliminary experiment (scripts/run_preliminary.sh output).
 
 Usage: plot_preliminary.py [results/preliminary]
+Reads <dir>/<variant>/<fault type>/records.csv, one subset per fault type.
+Genuine vectors and honest tracks are pooled over the subsets; a fault type's AUC compares its
+faulty tracks with the honest tracks of its own subset.
 Writes <dir>/figures/*.png and <dir>/tables.md. Needs matplotlib (requirements.txt).
 """
+from collections import Counter, defaultdict
 import sys
 from pathlib import Path
 
@@ -73,7 +77,7 @@ def fig_scores(t, variant, out):
     ax.set_yticks(range(1, len(labels) + 1), labels)
     ax.invert_yaxis()
     for i, k in enumerate(kinds, start=2):
-        ax.text(1.02, i, f"AUC {auc(t['honest'], t['faulty'][k]):.2f}", va="center", fontsize=8, color=TEXT_2)
+        ax.text(1.02, i, f"AUC {auc(t['honest_by'][k], t['faulty'][k]):.2f}", va="center", fontsize=8, color=TEXT_2)
     ax.set(xlim=(0, 1), xlabel="track score (mean confidence)",
            title=f"Track score by dominating source ({VARIANTS[variant]})")
     ax.grid(axis="y", visible=False)
@@ -122,13 +126,33 @@ def tables(vectors, tracks):
     for label, key in rows:
         lines.append(f"| {label} | " + " | ".join(f"{len(t[key])} / {mean(t[key]):.3f} / -" for t in tracks.values()) + " |")
     for kind in sorted(first["faulty"]):
-        cells = [f"{len(t['faulty'][kind])} / {mean(t['faulty'][kind]):.3f} / {auc(t['honest'], t['faulty'][kind]):.3f}"
+        cells = [f"{len(t['faulty'][kind])} / {mean(t['faulty'][kind]):.3f} / {auc(t['honest_by'][kind], t['faulty'][kind]):.3f}"
                  for t in tracks.values()]
         lines.append(f"| {kind} | " + " | ".join(cells) + " |")
     lines.append("| **all faulty** | " + " | ".join(
         f"{len(t['faulty_all'])} / {mean(t['faulty_all']):.3f} / {auc(t['honest'], t['faulty_all']):.3f}"
         for t in tracks.values()) + " |")
     return "\n".join(lines) + "\n"
+
+
+def load_variant(path):
+    """Merges the per-type subsets of one variant."""
+    vec = defaultdict(Counter)
+    t = {"clean": [], "touched": [], "faulty": defaultdict(list), "honest_by": {}}
+    for subset in sorted(p for p in path.iterdir() if (p / "records.csv").exists()):
+        rows = load(subset / "records.csv")
+        for key, c in vector_outcomes(rows).items():
+            vec[key].update(c)
+        s = track_scores(rows)
+        t["clean"] += s["clean"]
+        t["touched"] += s["touched"]
+        for kind, scores in s["faulty"].items():
+            t["faulty"][kind] += scores
+            t["honest_by"][kind] = s["honest"]
+    t["honest"] = t["clean"] + t["touched"]
+    t["faulty_all"] = [x for v in t["faulty"].values() for x in v]
+    order = sorted(vec, key=lambda k: (not k.startswith("Genuine"), k))
+    return {k: vec[k] for k in order}, t
 
 
 def main():
@@ -139,9 +163,7 @@ def main():
 
     vectors, tracks = {}, {}
     for variant in VARIANTS:
-        rows = load(root / variant / "records.csv")
-        vectors[variant] = vector_outcomes(rows)
-        tracks[variant] = track_scores(rows)
+        vectors[variant], tracks[variant] = load_variant(root / variant)
         fig_scores(tracks[variant], variant, figures / f"track_scores_{variant}.png")
         fig_outcomes(vectors[variant], variant, figures / f"vector_outcomes_{variant}.png")
     fig_roc(tracks, figures / "track_roc.png")

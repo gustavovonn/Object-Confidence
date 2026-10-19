@@ -63,10 +63,11 @@ scripts/run_preliminary.sh [groundtruth dir]     # inject faults, replay, evalua
 python3 scripts/plot_preliminary.py               # figures/*.png and tables.md (needs requirements.txt)
 ```
 
-Two subsets of one ground-truth run: VeReMi Extension position/speed malfunctions only, and
-malfunctions plus sensor errors. `scripts/evaluate.py` defines the metrics: per received vector,
-the outcome by source (rejected = flagged); per track, the mean confidence over its vectors and
-the AUC of honest against faulty tracks (a track is faulty when most of its vectors are).
+One subset per VeReMi Extension position/speed malfunction (8 types, as VeReMi Extension and
+paper 1), each without and with VeReMi Extension sensor errors: `results/preliminary/<variant>/<type>/`.
+`scripts/evaluate.py` defines the metrics: per received vector, the outcome by source
+(rejected = flagged); per track, the mean confidence over its vectors and the AUC of honest
+against faulty tracks of the same subset (a track is faulty when most of its vectors are).
 
 ## Known limitations of MVP 0
 

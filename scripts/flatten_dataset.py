@@ -2,7 +2,7 @@
 """Joins receptions with message content: one CSV row per received motion vector, no conversion.
 
 Usage: flatten_dataset.py <run dir: cam_sent.jsonl, cpm_sent.jsonl, reception.jsonl> <out.csv>
-Rows sorted by (receiver, rcvTime, messageID); fields as in Artery-Dataset-Generator/trace_schema.md;
+Rows sorted by (receiver, rcvTime, messageID); fields as in libs/Artery-Dataset-Generator/trace_schema.md;
 attackType from an injected subset (0 = genuine, CPM objects always 0).
 """
 import csv

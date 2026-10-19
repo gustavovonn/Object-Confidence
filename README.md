@@ -6,7 +6,7 @@ associates them to one track, keeps a fused reference state per object with an U
 Filter, and scores each track by how consistently the reports agree with it.
 
 It extends the per-sender mechanism of paper 1 (CP-Artery) to collective perception. Input traces
-come from `Artery-Dataset-Generator`.
+come from `libs/Artery-Dataset-Generator` (submodule).
 
 ## Pipeline (MVP 0)
 
@@ -41,8 +41,10 @@ Every default lives in `include/MechanismConstants.h` with its source.
 include/   MotionVector, EngineParams, MechanismConstants, ObjectTrack, Tracker, Scorer,
            VectorRecord, ObjectConfidenceEngine, StageTimer
 src/       Tracker, ObjectConfidenceEngine
-tests/     test_engine (synthetic pipeline checks)
-libs/      v2x-misc (UKF, CTRA, consistency check), eigen 3.4.1
+tools/     replay (dataset -> engine -> records)
+scripts/   flatten_dataset, run_preliminary, evaluate, plot_preliminary
+libs/      v2x-misc (UKF, CTRA, consistency check, geodesy), eigen 3.4.1,
+           Artery-Dataset-Generator (ground truth and fault injection)
 ```
 
 `ObjectTrack` holds only the fused state (`x`, `P`, `t`). Source bindings live in `Tracker`,
@@ -51,9 +53,14 @@ evidence in `Scorer`, evaluation data in `VectorRecord`.
 ## Build
 
 ```sh
-git submodule update --init
-cmake -S . -B build && cmake --build build
-./build/test_engine
+git submodule update --init                     # engine: eigen, v2x-misc; generator scripts
+cmake -S . -B build && cmake --build build      # engine library and tools/replay
+```
+
+Generating a dataset needs the generator's own submodules (Artery, LuST); see its README:
+
+```sh
+git -C libs/Artery-Dataset-Generator submodule update --init --recursive
 ```
 
 ## Preliminary experiment

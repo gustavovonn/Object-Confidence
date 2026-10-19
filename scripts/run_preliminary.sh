@@ -3,12 +3,13 @@
 # (Sec. IV-D) and paper 1:
 #   faults         VeReMi Extension CAM malfunction only
 #   faults_sensor  malfunction + VeReMi Extension sensor errors
-# Fault parameters: Artery-Dataset-Generator/config/faults.toml, `types` replaced per subset.
+# Fault parameters: libs/Artery-Dataset-Generator/config/faults.toml, `types` replaced per subset.
 # Usage: scripts/run_preliminary.sh [groundtruth dir] [output dir]
+# GENERATOR overrides the generator checkout (default: the libs/ submodule)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-GENERATOR=../Artery-Dataset-Generator
+GENERATOR=$(realpath "${GENERATOR:-libs/Artery-Dataset-Generator}")
 GT=$(realpath "${1:-$GENERATOR/data/groundtruth/lust-run0}")
 OUT=$(realpath -m "${2:-results/preliminary}")
 TYPES=(ConstPos ConstPosOffset RandomPos RandomPosOffset ConstSpeed ConstSpeedOffset RandomSpeed RandomSpeedOffset)

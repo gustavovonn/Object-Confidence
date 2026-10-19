@@ -14,12 +14,14 @@
 
 // Receiver-local confidence of fused object trajectories.
 // Stage order as Allig et al., VNC 2019, Sec. II-A: align, check, associate, fuse.
+//   0 retireStaleTracks   tracks without a fused report for retireAfter, before association
 //   1 plausibilityCheck   finite values
-//   2 project + associate tracks moved to the vector time; bound source or nearest in the gate
-//   3 checks              consistency against the source's last report; position gate
+//   2 associate           per message: bound source keeps its track; unbound sources jointly,
+//                         one per track, inside the gate (Hungarian)
+//   3 checks              per vector: track projected to the vector time; consistency against the
+//                         source's last report; position gate
 //   4 kalmanUpdate        only vectors that passed the checks
 //   5 score               hit or miss on the track
-//   6 retireStaleTracks
 class ObjectConfidenceEngine
 {
 public:
@@ -40,7 +42,7 @@ public:
     void setStageTimer(StageTimer* timer) { m_timer = timer; }
 
 private:
-    VectorRecord process(const MotionVector& v, uint64_t receiver);
+    void process(const MotionVector& v, uint64_t trackId, VectorRecord& r);
 
     EngineParams m_params;
     Tracker m_tracker;

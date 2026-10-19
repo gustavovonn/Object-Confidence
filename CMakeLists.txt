@@ -7,6 +7,10 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
+# Hungarian algorithm (BSD), libs/hungarian-algorithm-cpp
+add_library(hungarian STATIC libs/hungarian-algorithm-cpp/Hungarian.cpp)
+target_include_directories(hungarian SYSTEM PUBLIC ${PROJECT_SOURCE_DIR}/libs/hungarian-algorithm-cpp)
+
 add_library(object_confidence STATIC
     src/ObjectConfidenceEngine.cc
     src/Tracker.cc
@@ -17,6 +21,7 @@ target_include_directories(object_confidence PUBLIC
 )
 target_include_directories(object_confidence SYSTEM PUBLIC ${PROJECT_SOURCE_DIR}/libs/eigen)
 target_compile_options(object_confidence PRIVATE -Wall -Wextra)
+target_link_libraries(object_confidence PRIVATE hungarian)
 
 add_executable(replay tools/replay.cc)
 target_link_libraries(replay PRIVATE object_confidence)

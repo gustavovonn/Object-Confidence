@@ -20,17 +20,45 @@ std::vector<VectorRecord> ObjectConfidenceEngine::onMotionVectors(const std::vec
 {
     MaybeStage whole(m_timer, "onMotionVectors");
 
+    // stale tracks leave before association, so no vector is compared with a dead track
     {
-        MaybeStage s(m_timer, "1 retire");
+        MaybeStage s(m_timer, "0 retire");
         for (uint64_t id : m_tracker.retireStaleTracks(now)) {
             m_scorer.forget(id);
         }
     }
 
-    std::vector<VectorRecord> out;
-    out.reserve(vectors.size());
-    for (const MotionVector& v : vectors) {
-        out.push_back(process(v, receiver));
+    std::vector<VectorRecord> out(vectors.size());
+    std::vector<const MotionVector*> kept;
+    std::vector<std::size_t> keptIndex;
+    {
+        MaybeStage s(m_timer, "1 plausibility");
+        for (std::size_t i = 0; i < vectors.size(); ++i) {
+            const MotionVector& v = vectors[i];
+            VectorRecord& r = out[i];
+            r.t = v.t;
+            r.receiver = receiver;
+            r.author = v.author;
+            r.objectId = v.objectId;
+            r.origin = v.origin;
+            r.trueStation = v.trueStation;
+            if (plausibilityCheck(v)) {
+                kept.push_back(&v);
+                keptIndex.push_back(i);
+            } else {
+                r.outcome = Outcome::Dropped;
+            }
+        }
+    }
+
+    std::vector<uint64_t> trackOf;
+    {
+        MaybeStage s(m_timer, "2 associate");
+        trackOf = m_tracker.associate(kept);
+    }
+
+    for (std::size_t k = 0; k < kept.size(); ++k) {
+        process(*kept[k], trackOf[k], out[keptIndex[k]]);
     }
 
     return out;
@@ -62,55 +90,37 @@ bool ObjectConfidenceEngine::gateCheck(double residual) const
     return residual <= m_params.gateDistance;
 }
 
-VectorRecord ObjectConfidenceEngine::process(const MotionVector& v, uint64_t receiver)
+void ObjectConfidenceEngine::process(const MotionVector& v, uint64_t trackId, VectorRecord& r)
 {
-    VectorRecord r;
-    r.t = v.t;
-    r.receiver = receiver;
-    r.author = v.author;
-    r.objectId = v.objectId;
-    r.origin = v.origin;
-    r.trueStation = v.trueStation;
-
-    {
-        MaybeStage s(m_timer, "1 plausibility");
-        if (!plausibilityCheck(v)) {
-            r.outcome = Outcome::Dropped;
-            return r;
-        }
-    }
-
-    Tracker::Candidate c;
-    {
-        MaybeStage s(m_timer, "2 project + associate");
-        c = m_tracker.associate(v);
-    }
-
-    if (c.track == nullptr) {
-        const ObjectTrack& track = m_tracker.initiateTrack(v);
-        m_tracker.bind(v, track.id);
+    ObjectTrack* track = trackId != 0 ? m_tracker.find(trackId) : nullptr;
+    ukf::Prediction prediction;
+    double residual = -1.0;
+    if (track == nullptr || !m_tracker.residual(*track, v, prediction, residual)) {
+        const ObjectTrack& started = m_tracker.initiateTrack(v);
+        m_tracker.bind(v, started.id);
         r.outcome = Outcome::StartedTrack;
-        r.trackId = track.id;
-        r.confidence = m_scorer.confidenceOf(track.id);
-        return r;
+        r.trackId = started.id;
+        r.confidence = m_scorer.confidenceOf(started.id);
+        return;
     }
 
-    r.trackId = c.track->id;
-    r.residual = c.residual;
+    const bool bound = m_tracker.binding(v) != nullptr;
+    r.trackId = track->id;
+    r.residual = residual;
 
     bool passed = false;
     {
         MaybeStage s(m_timer, "3 checks");
         const ConsistencyResult consistency = consistencyCheck(v);
         r.consistencyFailed = consistency.failed;
-        passed = gateCheck(c.residual) && !consistency.failed;
+        passed = gateCheck(residual) && !consistency.failed;
     }
 
     if (passed) {
         MaybeStage s(m_timer, "4 kalmanUpdate");
-        m_tracker.kalmanUpdate(*c.track, c.prediction, v);
-        if (!c.bound) {
-            m_tracker.bind(v, c.track->id);
+        m_tracker.kalmanUpdate(*track, prediction, v);
+        if (!bound) {
+            m_tracker.bind(v, track->id);
         }
     }
 
@@ -121,5 +131,4 @@ VectorRecord ObjectConfidenceEngine::process(const MotionVector& v, uint64_t rec
     }
 
     m_tracker.recordReport(v);
-    return r;
 }

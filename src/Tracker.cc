@@ -2,9 +2,12 @@
 
 #include "Constants.h"
 #include "CtraProcessModel.h"
+#include "Hungarian.h"
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
+#include <set>
 
 namespace {
 
@@ -58,36 +61,67 @@ bool Tracker::project(const ObjectTrack& track, double t, ukf::Prediction& out) 
     return m_ukf.predict(track.x, track.P, m_Q, dt, out);
 }
 
-Tracker::Candidate Tracker::associate(const MotionVector& v)
+bool Tracker::residual(const ObjectTrack& track, const MotionVector& v, ukf::Prediction& out, double& residual) const
 {
-    Candidate best;
+    if (!project(track, v.t, out)) {
+        return false;
+    }
+    residual = std::hypot(v.x - out.x(CtraState::X), v.y - out.x(CtraState::Y));
+    return true;
+}
 
-    auto bound = m_bindings.find(keyOf(v));
-    if (bound != m_bindings.end()) {
-        if (ObjectTrack* track = find(bound->second.trackId)) {
-            if (project(*track, v.t, best.prediction)) {
-                best.track = track;
-                best.bound = true;
-                best.residual = std::hypot(v.x - best.prediction.x(CtraState::X),
-                                           v.y - best.prediction.x(CtraState::Y));
-                return best;
+std::vector<uint64_t> Tracker::associate(const std::vector<const MotionVector*>& vectors)
+{
+    std::vector<uint64_t> trackOf(vectors.size(), 0);
+
+    std::vector<std::size_t> unbound;
+    for (std::size_t i = 0; i < vectors.size(); ++i) {
+        auto b = m_bindings.find(keyOf(*vectors[i]));
+        if (b != m_bindings.end() && find(b->second.trackId) != nullptr) {
+            trackOf[i] = b->second.trackId;
+        } else {
+            unbound.push_back(i);
+        }
+    }
+    if (unbound.empty() || m_tracks.empty()) {
+        return trackOf;
+    }
+
+    // a CAM is the station's own report: one CAM source per track
+    std::set<uint64_t> withCam;
+    for (const auto& b : m_bindings) {
+        if (b.first.objectId < 0) {
+            withCam.insert(b.second.trackId);
+        }
+    }
+
+    // outside the gate: finite but above any sum of gated costs, so feasible matches come first
+    const double infeasible = 1e6;
+    std::vector<std::vector<double>> cost(unbound.size(), std::vector<double>(m_tracks.size(), infeasible));
+    ukf::Prediction p;
+    for (std::size_t r = 0; r < unbound.size(); ++r) {
+        const MotionVector& v = *vectors[unbound[r]];
+        for (std::size_t c = 0; c < m_tracks.size(); ++c) {
+            // an author reports each object once
+            if (authorBound(v.author, m_tracks[c].id) || (v.objectId < 0 && withCam.count(m_tracks[c].id))) {
+                continue;
+            }
+            double d = 0.0;
+            if (residual(m_tracks[c], v, p, d) && d <= m_params.gateDistance) {
+                cost[r][c] = d;
             }
         }
     }
 
-    Candidate c;
-    for (ObjectTrack& track : m_tracks) {
-        if (!project(track, v.t, c.prediction)) {
-            continue;
-        }
-        const double residual = std::hypot(v.x - c.prediction.x(CtraState::X), v.y - c.prediction.x(CtraState::Y));
-        if (residual <= m_params.gateDistance && (best.track == nullptr || residual < best.residual)) {
-            best.track = &track;
-            best.prediction = c.prediction;
-            best.residual = residual;
+    std::vector<int> assignment;
+    HungarianAlgorithm().Solve(cost, assignment);
+    for (std::size_t r = 0; r < unbound.size(); ++r) {
+        const int c = assignment[r];
+        if (c >= 0 && cost[r][c] <= m_params.gateDistance) {
+            trackOf[unbound[r]] = m_tracks[c].id;
         }
     }
-    return best;
+    return trackOf;
 }
 
 void Tracker::kalmanUpdate(ObjectTrack& track, const ukf::Prediction& prediction, const MotionVector& v)
@@ -180,6 +214,17 @@ void Tracker::recordReport(const MotionVector& v)
     if (it != m_bindings.end()) {
         it->second.last = reportOf(v);
     }
+}
+
+bool Tracker::authorBound(uint64_t author, uint64_t trackId) const
+{
+    for (auto it = m_bindings.lower_bound(SourceKey{author, std::numeric_limits<int64_t>::min()}); it != m_bindings.end() && it->first.author == author;
+         ++it) {
+        if (it->second.trackId == trackId) {
+            return true;
+        }
+    }
+    return false;
 }
 
 ObjectTrack* Tracker::find(uint64_t id)

@@ -29,24 +29,20 @@ struct SourceBinding {
 };
 
 // Owns the tracks and the source -> track association.
-// Association: a bound source keeps its track (unique PDO object ID, Allig et al., VNC 2019);
-// an unbound source takes the nearest projected track inside the gate (GNN, Ambrosin et al., ITSC 2019).
 class Tracker
 {
 public:
-    struct Candidate {
-        ObjectTrack* track = nullptr;
-        ukf::Prediction prediction;  // track projected to the vector time
-        double residual = -1.0;      // position residual [m]
-        bool bound = false;          // reached through an existing binding
-    };
-
     explicit Tracker(const EngineParams& params);
 
     // Track moved to time t; the track itself is not modified
     bool project(const ObjectTrack& track, double t, ukf::Prediction& out) const;
 
-    Candidate associate(const MotionVector& v);
+    // Track projected to v's time and v's position residual to it [m]
+    bool residual(const ObjectTrack& track, const MotionVector& v, ukf::Prediction& out, double& residual) const;
+
+    // Track id per vector of one message, 0 when none
+    std::vector<uint64_t> associate(const std::vector<const MotionVector*>& vectors);
+    ObjectTrack* find(uint64_t id);
     void kalmanUpdate(ObjectTrack& track, const ukf::Prediction& prediction, const MotionVector& v);
     ObjectTrack& initiateTrack(const MotionVector& v);
     std::vector<uint64_t> retireStaleTracks(double now);
@@ -58,7 +54,8 @@ public:
     const std::vector<ObjectTrack>& tracks() const { return m_tracks; }
 
 private:
-    ObjectTrack* find(uint64_t id);
+    // a source of this author already feeds the track
+    bool authorBound(uint64_t author, uint64_t trackId) const;
 
     EngineParams m_params;
     ukf::UnscentedKalmanFilter m_ukf;

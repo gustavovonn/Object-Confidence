@@ -70,4 +70,5 @@ Testing/
 dataset/
 results/
 **/__pycache__/**
-docs/.venv/
+docs/
+.venv/

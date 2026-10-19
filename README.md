@@ -11,21 +11,21 @@ come from `libs/Artery-Dataset-Generator` (submodule).
 ## Pipeline (MVP 0)
 
 ```
-onMotionVectors(vectors, receiver, now)        per vector:
-  1 retireStaleTracks     once per call
-  2 plausibilityCheck     finite values
-  3 project + associate   tracks moved to the vector time (UKF predict, not committed);
-                          bound (author, objectId) keeps its track, else nearest track in the gate
-  4 checks                consistency against the source's last report (paper 1);
-                          position residual <= gate
-  5 kalmanUpdate          only if 3 passed
-  6 score                 passed: hit, failed: miss
+onMotionVectors(vectors, receiver, now)        one received message
+  0 retireStaleTracks     tracks without a fused report for 3.1 s, before association
+  1 plausibilityCheck     finite values
+  2 associate             per message: bound (author, objectId) keeps its track; unbound sources
+                          jointly, one per track, inside the gate (Hungarian)
+  3 checks                per vector: track projected to its time (UKF predict, not committed);
+                          consistency against the source's last report (paper 1); residual <= gate
+  4 kalmanUpdate          only if 3 passed
+  5 score                 passed: hit, failed: miss
 ```
 
 | Piece | Choice | Reference |
 |---|---|---|
 | Stage order | align, check, associate, fuse | Allig et al., VNC 2019, Sec. II-A |
-| Association | bound source keeps its track (unique object ID); new source: nearest in the gate | Allig et al. 2019; Ambrosin et al., ITSC 2019 |
+| Association | bound source keeps its track (unique object ID); new sources of a message assigned jointly, one per track, at most one source per author and one CAM per track ; Hungarian algorithm via `libs/hungarian-algorithm-cpp` |
 | Gate | Euclidean position residual <= 4.35 m | paper 1, static `d_max_0` (Sec. V-A) |
 | Consistency | reported vs implied speed, frozen position | paper 1, Sec. IV-B-1 |
 | Filter | UKF, augmented process noise, additive measurement noise | Wan & van der Merwe 2000; Julier & Uhlmann 2004; Schubert et al. 2008 |
@@ -42,8 +42,8 @@ include/   MotionVector, EngineParams, MechanismConstants, ObjectTrack, Tracker,
            VectorRecord, ObjectConfidenceEngine, StageTimer
 src/       Tracker, ObjectConfidenceEngine
 tools/     replay (dataset -> engine -> records)
-scripts/   flatten_dataset, run_preliminary, evaluate, plot_preliminary
-libs/      v2x-misc (UKF, CTRA, consistency check, geodesy), eigen 3.4.1,
+scripts/   flatten_dataset, run_preliminary, evaluate
+libs/      v2x-misc (UKF, CTRA, consistency check, geodesy), eigen 3.4.1, hungarian-algorithm-cpp,
            Artery-Dataset-Generator (ground truth and fault injection)
 ```
 
@@ -66,15 +66,17 @@ git -C libs/Artery-Dataset-Generator submodule update --init --recursive
 ## Preliminary experiment
 
 ```sh
-scripts/run_preliminary.sh [groundtruth dir]     # inject faults, replay, evaluate -> results/preliminary/
-python3 scripts/plot_preliminary.py               # figures/*.png and tables.md (needs requirements.txt)
+scripts/run_preliminary.sh                  # 8 fault subsets, replay -> results/preliminary/<type>/records.csv
+.venv/bin/python scripts/evaluate.py        # table.md and confidence_over_time.png
 ```
 
 One subset per VeReMi Extension position/speed malfunction (8 types, as VeReMi Extension and
-paper 1), each without and with VeReMi Extension sensor errors: `results/preliminary/<variant>/<type>/`.
-`scripts/evaluate.py` defines the metrics: per received vector, the outcome by source
-(rejected = flagged); per track, the mean confidence over its vectors and the AUC of honest
-against faulty tracks of the same subset (a track is faulty when most of its vectors are).
+paper 1), without sensor errors. A track is faulty when most of its vectors are; its score is
+the mean confidence over its vectors; the AUC compares honest and faulty tracks of the same
+subset. The figure follows three tracks of one receiver: an honest one, one fed by a RandomPos
+source and one fed by a ConstPosOffset source.
+
+The venv: `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`.
 
 ## Known limitations of MVP 0
 

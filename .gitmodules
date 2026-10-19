@@ -7,3 +7,6 @@
 [submodule "libs/Artery-Dataset-Generator"]
 	path = libs/Artery-Dataset-Generator
 	url = https://github.com/gustavovonn/Artery-Dataset-Generator.git
+[submodule "libs/hungarian-algorithm-cpp"]
+	path = libs/hungarian-algorithm-cpp
+	url = https://github.com/mcximing/hungarian-algorithm-cpp.git

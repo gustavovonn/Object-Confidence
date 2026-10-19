@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
-"""Preliminary evaluation of a replay on an injected subset (labels: attackType, VeReMi Extension ids).
+"""Minimal preliminary result: per-fault AUC table and one confidence-over-time figure.
 
-Usage: evaluate.py <records.csv>
-  vector level: outcome per attack type; rejected = flagged
-  track level:  a track is faulty when most of its vectors are faulty; its score is the mean
-                confidence over its vectors; AUC = P(score honest > score faulty)
+Usage: evaluate.py [results/preliminary]
+Reads <dir>/<fault type>/records.csv (scripts/run_preliminary.sh) and writes
+<dir>/table.md and <dir>/confidence_over_time.png (needs matplotlib, requirements.txt).
+
+A track (one receiver, one trackId) is faulty when most of its vectors carry an attackType.
+Its score is the mean confidence over its vectors. AUC = P(score honest > score faulty),
+honest and faulty tracks taken from the same subset.
 """
+import bisect
 import csv
 import sys
 from collections import Counter, defaultdict
+from pathlib import Path
 
-ATTACK_NAMES = {
-    0: "Genuine", 1: "ConstPos", 2: "ConstPosOffset", 3: "RandomPos", 4: "RandomPosOffset",
-    5: "ConstSpeed", 6: "ConstSpeedOffset", 7: "RandomSpeed", 8: "RandomSpeedOffset",
-}
-OUTCOMES = ("fused", "rejected", "started")
+TYPES = ["ConstPos", "ConstPosOffset", "RandomPos", "RandomPosOffset",
+         "ConstSpeed", "ConstSpeedOffset", "RandomSpeed", "RandomSpeedOffset"]
 
 
 def load(path):
@@ -22,78 +24,98 @@ def load(path):
         return list(csv.DictReader(f))
 
 
-def auc(positive, negative):
-    """Mann-Whitney: probability that a positive scores above a negative, ties count half."""
-    if not positive or not negative:
-        return float("nan")
-    ranked = sorted([(s, 1) for s in positive] + [(s, 0) for s in negative])
-    rank_sum, i = 0.0, 0
-    while i < len(ranked):
-        j = i
-        while j < len(ranked) and ranked[j][0] == ranked[i][0]:
-            j += 1
-        mean_rank = (i + j + 1) / 2.0
-        rank_sum += mean_rank * sum(1 for k in range(i, j) if ranked[k][1] == 1)
-        i = j
-    n_pos, n_neg = len(positive), len(negative)
-    return (rank_sum - n_pos * (n_pos + 1) / 2.0) / (n_pos * n_neg)
-
-
-def mean(values):
-    return sum(values) / len(values) if values else float("nan")
-
-
-def vector_outcomes(rows):
-    """{source: Counter(outcome)}; source = attack name, or 'Genuine CAM' / 'Genuine CPM'."""
-    groups = defaultdict(Counter)
-    for r in rows:
-        label = int(r["attackType"])
-        key = ATTACK_NAMES.get(label, str(label)) if label else f"Genuine {r['origin'].upper()}"
-        groups[key][r["outcome"]] += 1
-    order = sorted(groups, key=lambda k: (not k.startswith("Genuine"), k))
-    return {k: groups[k] for k in order}
-
-
-def track_scores(rows):
-    """Honest scores (split clean/touched) and faulty scores per attack type."""
+def tracks_of(rows):
+    """{(receiver, trackId): [rows in order]}"""
     tracks = defaultdict(list)
     for r in rows:
         if r["trackId"] != "0":
             tracks[(r["receiver"], r["trackId"])].append(r)
-    out = {"clean": [], "touched": [], "faulty": defaultdict(list)}
-    for vectors in tracks.values():
-        labels = [int(v["attackType"]) for v in vectors]
-        score = mean([float(v["confidence"]) for v in vectors])
-        faulty = [l for l in labels if l]
-        if len(faulty) > len(labels) / 2:
-            kind = Counter(faulty).most_common(1)[0][0]
-            out["faulty"][ATTACK_NAMES.get(kind, str(kind))].append(score)
-        else:
-            out["touched" if faulty else "clean"].append(score)
-    out["honest"] = out["clean"] + out["touched"]
-    out["faulty_all"] = [s for v in out["faulty"].values() for s in v]
-    return out
+    return tracks
+
+
+def is_faulty(vectors):
+    return sum(1 for v in vectors if v["attackType"] != "0") > len(vectors) / 2
+
+
+def score(vectors):
+    return sum(float(v["confidence"]) for v in vectors) / len(vectors)
+
+
+def auc(positive, negative):
+    """Mann-Whitney: probability that a positive scores above a negative, ties count half."""
+    ranked = sorted(negative)
+    wins = 0.0
+    for p in positive:
+        below = bisect.bisect_left(ranked, p)
+        wins += below + 0.5 * (bisect.bisect_right(ranked, p) - below)
+    return wins / (len(positive) * len(negative))
+
+
+def table(root):
+    lines = ["| Fault | honest tracks | faulty tracks | AUC |", "|---|---|---|---|"]
+    all_honest, all_faulty = [], []
+    for kind in TYPES:
+        tracks = tracks_of(load(root / kind / "records.csv")).values()
+        honest = [score(t) for t in tracks if not is_faulty(t)]
+        faulty = [score(t) for t in tracks if is_faulty(t)]
+        all_honest += honest
+        all_faulty += faulty
+        lines.append(f"| {kind} | {len(honest)} | {len(faulty)} | {auc(honest, faulty):.3f} |")
+    lines.append(f"| **all, pooled** | {len(all_honest)} | {len(all_faulty)} | {auc(all_honest, all_faulty):.3f} |")
+    return "\n".join(lines) + "\n"
+
+
+def longest(tracks, faulty):
+    """Longest honest or faulty track per receiver: {receiver: rows}."""
+    best = {}
+    for (receiver, _), vectors in tracks.items():
+        if is_faulty(vectors) == faulty and len(vectors) > len(best.get(receiver, [])):
+            best[receiver] = vectors
+    return best
+
+
+def figure(root, out):
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    random_pos = tracks_of(load(root / "RandomPos" / "records.csv"))
+    const_offset = tracks_of(load(root / "ConstPosOffset" / "records.csv"))
+    honest = longest(random_pos, faulty=False)
+    attacked = longest(random_pos, faulty=True)
+    ghost = longest(const_offset, faulty=True)
+
+    # one receiver that holds all three, chosen by the shortest of its three tracks
+    receiver = max(set(honest) & set(attacked) & set(ghost),
+                   key=lambda r: min(len(honest[r]), len(attacked[r]), len(ghost[r])))
+
+    series = [
+        ("honest track", honest[receiver], "#2a78d6"),
+        ("RandomPos source", attacked[receiver], "#eb6834"),
+        ("ConstPosOffset source (other subset)", ghost[receiver], "#1baf7a"),
+    ]
+    plt.rcParams.update({"axes.spines.top": False, "axes.spines.right": False, "font.size": 9,
+                         "axes.grid": True, "grid.color": "#e4e3df", "legend.frameon": False})
+    fig, ax = plt.subplots(figsize=(6.0, 3.4))
+    for label, vectors, color in series:
+        t0 = float(vectors[0]["t"])
+        ax.plot([float(v["t"]) - t0 for v in vectors], [float(v["confidence"]) for v in vectors],
+                color=color, linewidth=2, label=label)
+    ax.axhline(0.5, color="#a3a29c", linewidth=1, linestyle="--")
+    ax.set(ylim=(0, 1), xlabel="time since the track started [s]", ylabel="track confidence",
+           title=f"Track confidence at receiver {receiver}")
+    ax.legend(loc="lower left")
+    fig.tight_layout()
+    fig.savefig(out, dpi=200)
 
 
 def main():
-    rows = load(sys.argv[1])
-
-    print("vector level (rejected = flagged)")
-    print(f"  {'source':<20}{'n':>8}{'fused':>9}{'rejected':>10}{'started':>9}")
-    for key, c in vector_outcomes(rows).items():
-        n = sum(c.values())
-        print(f"  {key:<20}{n:>8}{100 * c['fused'] / n:>8.1f}%{100 * c['rejected'] / n:>9.1f}%{100 * c['started'] / n:>8.1f}%")
-
-    t = track_scores(rows)
-    print("\ntrack level (score = mean confidence over the track's vectors)")
-    print(f"  honest tracks {len(t['honest'])}: mean score {mean(t['honest']):.3f}")
-    print(f"    fed only by genuine vectors {len(t['clean'])}: {mean(t['clean']):.3f}; "
-          f"also by faulty ones {len(t['touched'])}: {mean(t['touched']):.3f}")
-    print(f"  faulty tracks {len(t['faulty_all'])}: mean score {mean(t['faulty_all']):.3f}")
-    print(f"  AUC honest > faulty: {auc(t['honest'], t['faulty_all']):.3f}")
-    for kind in sorted(t["faulty"]):
-        s = t["faulty"][kind]
-        print(f"    {kind:<20} tracks {len(s):>4}  mean {mean(s):.3f}  AUC {auc(t['honest'], s):.3f}")
+    root = Path(sys.argv[1] if len(sys.argv) > 1 else "results/preliminary")
+    text = table(root)
+    (root / "table.md").write_text(text)
+    print(text)
+    figure(root, root / "confidence_over_time.png")
+    print(f"wrote {root / 'table.md'} and {root / 'confidence_over_time.png'}")
 
 
 if __name__ == "__main__":

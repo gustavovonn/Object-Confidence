@@ -13,12 +13,11 @@
 #include <vector>
 
 // Receiver-local confidence of fused object trajectories.
-// Stage order as Allig et al., VNC 2019, Sec. II-A: align, check, associate, fuse.
 //   0 retireStaleTracks   tracks without a fused report for retireAfter, before association
 //   1 plausibilityCheck   finite values
 //   2 associate           per message: bound source keeps its track; unbound sources jointly,
 //                         one per track, inside the gate (Hungarian)
-//   3 checks              per vector: track projected to the vector time; consistency against the
+//   3 checks              per vector with a track: track projected to the vector time; consistency against the
 //                         source's last report; position gate
 //   4 kalmanUpdate        only vectors that passed the checks
 //   5 score               hit or miss on the track

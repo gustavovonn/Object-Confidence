@@ -93,9 +93,20 @@ bool ObjectConfidenceEngine::gateCheck(double residual) const
 void ObjectConfidenceEngine::process(const MotionVector& v, uint64_t trackId, VectorRecord& r)
 {
     ObjectTrack* track = trackId != 0 ? m_tracker.find(trackId) : nullptr;
-    ukf::Prediction prediction;
     double residual = -1.0;
-    if (track == nullptr || !m_tracker.residual(*track, v, prediction, residual)) {
+    bool projected = false;
+    bool passed = false;
+    if (track != nullptr) {
+        MaybeStage s(m_timer, "3 checks");
+        projected = m_tracker.residual(*track, v, residual);
+        if (projected) {
+            const ConsistencyResult consistency = consistencyCheck(v);
+            r.consistencyFailed = consistency.failed;
+            passed = gateCheck(residual) && !consistency.failed;
+        }
+    }
+
+    if (!projected) {
         const ObjectTrack& started = m_tracker.initiateTrack(v);
         m_tracker.bind(v, started.id);
         r.outcome = Outcome::StartedTrack;
@@ -108,17 +119,9 @@ void ObjectConfidenceEngine::process(const MotionVector& v, uint64_t trackId, Ve
     r.trackId = track->id;
     r.residual = residual;
 
-    bool passed = false;
-    {
-        MaybeStage s(m_timer, "3 checks");
-        const ConsistencyResult consistency = consistencyCheck(v);
-        r.consistencyFailed = consistency.failed;
-        passed = gateCheck(residual) && !consistency.failed;
-    }
-
     if (passed) {
         MaybeStage s(m_timer, "4 kalmanUpdate");
-        m_tracker.kalmanUpdate(*track, prediction, v);
+        m_tracker.kalmanUpdate(*track, v);
         if (!bound) {
             m_tracker.bind(v, track->id);
         }

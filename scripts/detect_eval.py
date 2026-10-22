@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """Minimal preliminary result: per-fault detection table and one confidence-over-time figure.
 
-Usage: evaluate.py [results/preliminary]
+Usage: detect_eval.py <results dir>
 Reads <dir>/<fault type>/records.csv (scripts/run_preliminary.sh) and writes
 <dir>/table.md and <dir>/confidence_over_time.png (needs matplotlib, requirements.txt).
 
 Metrics as paper 1 (Beacon-Confidence, detection-eval/scripts/run_scorer_comparison.py):
 one decision per received vector, flagged when the confidence of its track after the vector
-is below 0.5; positive when the vector's content was falsified (attackType > 0).
-Precision, recall, FPR and accuracy in %, F1 in [0, 1]; counts summed over the subset.
+is below 0.5; positive when the vector's content was falsified (attackType > 0; a CPM object
+takes its message's). Precision, recall, FPR and accuracy in %, F1 in [0, 1], `-` when undefined
+(no positives: speed faults never reach a CPM); counts summed over the subset.
+One table over all vectors, one over CAMs, one over CPM objects.
 """
 import csv
 import sys
@@ -40,10 +42,13 @@ def is_faulty(vectors):
 THRESHOLD = 0.5
 
 
-def counts(rows):
+ORIGINS = [("All vectors", None), ("CAM", "cam"), ("CPM objects", "cpm")]
+
+
+def counts(rows, origin=None):
     tp = fp = tn = fn = 0
     for r in rows:
-        if r["outcome"] == "dropped":
+        if r["outcome"] == "dropped" or origin not in (None, r["origin"]):
             continue
         flagged = float(r["confidence"]) < THRESHOLD
         faulty = r["attackType"] != "0"
@@ -55,24 +60,47 @@ def counts(rows):
 
 
 def metrics(tp, fp, tn, fn):
-    precision = 100.0 * tp / (tp + fp) if tp + fp else 0.0
-    recall = 100.0 * tp / (tp + fn) if tp + fn else 0.0
-    fpr = 100.0 * fp / (fp + tn) if fp + tn else 0.0
-    accuracy = 100.0 * (tp + tn) / (tp + fp + tn + fn)
-    f1 = 2 * precision * recall / (precision + recall) / 100.0 if precision + recall else 0.0
+    """(F1, FPR, accuracy, precision, recall); None when undefined."""
+    precision = 100.0 * tp / (tp + fp) if tp + fp else None
+    recall = 100.0 * tp / (tp + fn) if tp + fn else None
+    fpr = 100.0 * fp / (fp + tn) if fp + tn else None
+    accuracy = 100.0 * (tp + tn) / (tp + fp + tn + fn) if tp + fp + tn + fn else None
+    f1 = 2 * precision * recall / (precision + recall) / 100.0 if precision and recall else None
+    if f1 is None and recall is not None:
+        f1 = 0.0
     return f1, fpr, accuracy, precision, recall
 
 
+def fmt(value, digits):
+    return "-" if value is None else f"{value:.{digits}f}"
+
+
+def row(name, c):
+    tp, fp, tn, fn = c
+    f1, fpr, accuracy, precision, recall = metrics(*c)
+    return "| {} | {} | {} | {} | {} | {} | {} | {} |".format(
+        name, tp + fp + tn + fn, tp + fn, fmt(f1, 4), fmt(fpr, 2), fmt(accuracy, 2),
+        fmt(precision, 2), fmt(recall, 2))
+
+
 def table(root):
-    lines = ["| Fault | F1 | FPR (%) | Accuracy (%) | Precision (%) | Recall (%) |",
-             "|---|---|---|---|---|---|"]
-    total = [0, 0, 0, 0]
+    # one subset in memory at a time: {kind: {origin: counts}}
+    per = {}
     for kind in TYPES:
-        c = counts(load(root / kind / "records.csv"))
-        total = [a + b for a, b in zip(total, c)]
-        lines.append("| {} | {:.4f} | {:.2f} | {:.2f} | {:.2f} | {:.2f} |".format(kind, *metrics(*c)))
-    lines.append("| **all** | {:.4f} | {:.2f} | {:.2f} | {:.2f} | {:.2f} |".format(*metrics(*total)))
-    return "\n".join(lines) + "\n"
+        rows = load(root / kind / "records.csv")
+        per[kind] = {origin: counts(rows, origin) for _, origin in ORIGINS}
+    lines = []
+    for title, origin in ORIGINS:
+        lines += [f"## {title}", "",
+                  "| Fault | Vectors | Positives | F1 | FPR (%) | Accuracy (%) | Precision (%) | Recall (%) |",
+                  "|---|---|---|---|---|---|---|---|"]
+        total = [0, 0, 0, 0]
+        for kind in TYPES:
+            c = per[kind][origin]
+            total = [a + b for a, b in zip(total, c)]
+            lines.append(row(kind, c))
+        lines += [row("**all**", total), ""]
+    return "\n".join(lines)
 
 
 def longest(tracks, faulty):
@@ -120,7 +148,7 @@ def figure(root, out):
 
 
 def main():
-    root = Path(sys.argv[1] if len(sys.argv) > 1 else "results/preliminary")
+    root = Path(sys.argv[1])
     text = table(root)
     (root / "table.md").write_text(text)
     print(text)

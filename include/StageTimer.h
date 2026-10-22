@@ -71,6 +71,9 @@ private:
 class StageTimer
 {
 public:
+    // samplesPerStage: reserved up front, so a stage never reallocates inside an enclosing timed region
+    explicit StageTimer(std::size_t samplesPerStage = 4096) : m_reserve(samplesPerStage) {}
+
     // deque: references stay valid when later stages are added
     StageStats& stage(const std::string& name)
     {
@@ -80,11 +83,23 @@ public:
             }
         }
         m_stages.push_back(StageStats{name, {}});
-        m_stages.back().samples.reserve(4096);
+        m_stages.back().samples.reserve(m_reserve);
         return m_stages.back();
     }
 
     const std::deque<StageStats>& stages() const { return m_stages; }
+
+    static const char* csvHeader() { return "dataset,stage,n,mean_us,p50_us,p99_us,max_us,share_pct"; }
+
+    // one row per stage, columns of csvHeader()
+    void writeCsv(std::FILE* out, const char* dataset) const
+    {
+        const double whole = wholeTotal();
+        for (const StageStats& s : m_stages) {
+            std::fprintf(out, "%s,%s,%zu,%.4f,%.4f,%.4f,%.4f,%.2f\n", dataset, s.name.c_str(), s.count(), s.mean(),
+                         s.percentile(0.50), s.percentile(0.99), s.max(), whole > 0.0 ? 100.0 * s.total() / whole : 0.0);
+        }
+    }
 
     // budgetUs: per-message deadline
     void report(const char* title, double budgetUs) const
@@ -94,13 +109,8 @@ public:
                     "% of whole");
         std::printf("%s\n", std::string(84, '-').c_str());
 
-        const StageStats* whole = nullptr;
-        for (const StageStats& s : m_stages) {
-            if (s.name == "onMotionVectors") {
-                whole = &s;
-            }
-        }
-        const double wholeTotal = whole != nullptr ? whole->total() : 0.0;
+        const StageStats* whole = wholeStage();
+        const double wholeTotal = this->wholeTotal();
 
         for (const StageStats& s : m_stages) {
             std::printf("%-22s %8zu %10.2f %10.2f %10.2f %10.2f %8.1f%%\n", s.name.c_str(), s.count(), s.mean(),
@@ -117,6 +127,23 @@ public:
     }
 
 private:
+    const StageStats* wholeStage() const
+    {
+        for (const StageStats& s : m_stages) {
+            if (s.name == "onMotionVectors") {
+                return &s;
+            }
+        }
+        return nullptr;
+    }
+
+    double wholeTotal() const
+    {
+        const StageStats* whole = wholeStage();
+        return whole != nullptr ? whole->total() : 0.0;
+    }
+
+    std::size_t m_reserve;
     std::deque<StageStats> m_stages;
 };
 

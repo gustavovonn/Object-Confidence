@@ -1,5 +1,9 @@
 // Replays flattened receptions (scripts/flatten_dataset.py) through one engine per receiver.
-// Usage: replay <receptions.csv> <records.csv> [--profile]
+// Usage: replay <receptions.csv> <records.csv> [--profile] [--max-msgs N] [--csv-out <file>] [--dataset <name>]
+//   --profile   per-stage latency report
+//   --max-msgs  stop after N messages
+//   --csv-out   append the per-stage latency rows to <file> (header when new); implies --profile
+//   --dataset   name in those rows; default: receptions file name without extension
 
 #include "MessageAdapter.h"
 #include "ObjectConfidenceEngine.h"
@@ -86,15 +90,50 @@ const char* outcomeName(Outcome o)
     return "?";
 }
 
+// file name without directory and extension
+std::string stem(const std::string& path)
+{
+    const std::size_t slash = path.find_last_of('/');
+    const std::string name = slash == std::string::npos ? path : path.substr(slash + 1);
+    const std::size_t dot = name.find_last_of('.');
+    return dot == std::string::npos ? name : name.substr(0, dot);
+}
+
+int usage(const char* program)
+{
+    std::fprintf(stderr,
+                 "usage: %s <receptions.csv> <records.csv> [--profile] [--max-msgs N] [--csv-out <file>] "
+                 "[--dataset <name>]\n",
+                 program);
+    return EXIT_FAILURE;
+}
+
 }  // namespace
 
 int main(int argc, char** argv)
 {
     if (argc < 3) {
-        std::fprintf(stderr, "usage: %s <receptions.csv> <records.csv> [--profile]\n", argv[0]);
-        return EXIT_FAILURE;
+        return usage(argv[0]);
     }
-    const bool profile = argc > 3 && std::string(argv[3]) == "--profile";
+    bool profile = false;
+    std::size_t maxMsgs = 0;  // 0: all
+    std::string csvOut;
+    std::string dataset = stem(argv[1]);
+    for (int i = 3; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg == "--profile") {
+            profile = true;
+        } else if (arg == "--max-msgs" && i + 1 < argc) {
+            maxMsgs = std::strtoull(argv[++i], nullptr, 10);
+        } else if (arg == "--csv-out" && i + 1 < argc) {
+            csvOut = argv[++i];
+            profile = true;
+        } else if (arg == "--dataset" && i + 1 < argc) {
+            dataset = argv[++i];
+        } else {
+            return usage(argv[0]);
+        }
+    }
 
     std::ifstream in(argv[1]);
     std::ofstream out(argv[2]);
@@ -105,11 +144,22 @@ int main(int argc, char** argv)
     out << "receiver,rcvTime,t,author,objectId,origin,trueStation,outcome,trackId,residual,consistencyFailed,confidence,attackType\n";
 
     std::string line;
+
+    // a stage takes at most one sample per row; reserving that keeps reallocation out of the timed regions
+    std::size_t rows = 0;
+    if (profile) {
+        while (std::getline(in, line)) {
+            ++rows;
+        }
+        in.clear();
+        in.seekg(0);
+    }
+
     std::getline(in, line);  // header
 
     std::unique_ptr<LocalTangentPlane> plane;  // origin: first reported position
     std::unique_ptr<ObjectConfidenceEngine> engine;
-    StageTimer timer;
+    StageTimer timer(rows);
     uint64_t currentReceiver = 0;
     std::vector<MotionVector> message;
     std::vector<int> labels;  // attackType per vector, passed through
@@ -152,6 +202,10 @@ int main(int argc, char** argv)
         } else if (row.messageId != lastMessage) {
             flush(currentReceiver, lastRcv);
         }
+        // a flush just emptied the message, so nothing is left half processed
+        if (maxMsgs > 0 && messages >= maxMsgs) {
+            break;
+        }
         message.push_back(toMotionVector(row, *plane));
         labels.push_back(std::isfinite(row.f[ATTACK_TYPE]) ? static_cast<int>(row.f[ATTACK_TYPE]) : 0);
         lastMessage = row.messageId;
@@ -162,6 +216,19 @@ int main(int argc, char** argv)
     std::printf("%zu messages, %zu motion vectors\n", messages, vectors);
     if (profile) {
         timer.report("per-stage latency", 100000.0);
+    }
+    if (!csvOut.empty()) {
+        std::FILE* csv = std::fopen(csvOut.c_str(), "a");
+        if (csv == nullptr) {
+            std::fprintf(stderr, "cannot open %s\n", csvOut.c_str());
+            return EXIT_FAILURE;
+        }
+        std::fseek(csv, 0, SEEK_END);
+        if (std::ftell(csv) == 0) {
+            std::fprintf(csv, "%s\n", StageTimer::csvHeader());
+        }
+        timer.writeCsv(csv, dataset.c_str());
+        std::fclose(csv);
     }
     return EXIT_SUCCESS;
 }

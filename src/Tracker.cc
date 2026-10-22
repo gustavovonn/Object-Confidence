@@ -1,8 +1,8 @@
 #include "Tracker.h"
 
 #include "Constants.h"
-#include "CtraProcessModel.h"
 #include "Hungarian.h"
+#include "measurement_package.h"
 
 #include <algorithm>
 #include <cmath>
@@ -27,47 +27,50 @@ KinematicState reportOf(const MotionVector& v)
     return s;
 }
 
-Eigen::VectorXd measurePositionVelocity(const Eigen::VectorXd& x)
+long long microseconds(double t)
 {
-    using namespace CtraState;
-    Eigen::VectorXd z(4);
-    z << x(X), x(Y), x(SPEED), x(HEADING);
-    return z;
+    return std::llround(t * 1e6);
 }
 
-Eigen::VectorXd measurePosition(const Eigen::VectorXd& x)
+// UKF yaw is counter-clockwise from east; reports carry a heading clockwise from north
+double yawOf(double heading)
 {
-    using namespace CtraState;
-    Eigen::VectorXd z(2);
-    z << x(X), x(Y);
-    return z;
+    return M_PI / 2.0 - heading;
+}
+
+// UKF's LASER measurement: [px, py, v, yaw]
+MeasurementPackage laserOf(const MotionVector& v, long long timestamp)
+{
+    MeasurementPackage m;
+    m.sensor_type_ = MeasurementPackage::LASER;
+    m.raw_measurements_ = Eigen::VectorXd(4);
+    m.raw_measurements_ << v.x, v.y, v.speed, yawOf(v.heading);
+    m.timestamp_ = timestamp;
+    return m;
 }
 
 }  // namespace
 
 Tracker::Tracker(const EngineParams& params)
     : m_params(params)
-    , m_ukf(CtraState::SIZE, CtraState::NOISE_SIZE, ctraProcess, CtraState::HEADING)
 {
-    m_Q = Eigen::MatrixXd::Zero(CtraState::NOISE_SIZE, CtraState::NOISE_SIZE);
-    m_Q(CtraState::JERK, CtraState::JERK) = params.jerkStd * params.jerkStd;
-    m_Q(CtraState::YAW_ACCEL, CtraState::YAW_ACCEL) = params.yawAccelStd * params.yawAccelStd;
 }
 
-bool Tracker::project(const ObjectTrack& track, double t, ukf::Prediction& out) const
+void Tracker::project(const ObjectTrack& track, double t, UKF& out) const
 {
     // out-of-sequence reports are compared with the latest state
     const double dt = std::max(0.0, t - track.t);
-    return m_ukf.predict(track.x, track.P, m_Q, dt, out);
+    // plain copy: UKF_copy() leaves std_laspx_ uninitialised
+    out = track.filter;
+    out.Prediction(dt);
 }
 
-bool Tracker::residual(const ObjectTrack& track, const MotionVector& v, ukf::Prediction& out, double& residual) const
+bool Tracker::residual(const ObjectTrack& track, const MotionVector& v, double& residual) const
 {
-    if (!project(track, v.t, out)) {
-        return false;
-    }
-    residual = std::hypot(v.x - out.x(CtraState::X), v.y - out.x(CtraState::Y));
-    return true;
+    UKF predicted;
+    project(track, v.t, predicted);
+    residual = std::hypot(v.x - predicted.x_(0), v.y - predicted.x_(1));
+    return std::isfinite(residual);
 }
 
 std::vector<uint64_t> Tracker::associate(const std::vector<const MotionVector*>& vectors)
@@ -98,7 +101,6 @@ std::vector<uint64_t> Tracker::associate(const std::vector<const MotionVector*>&
     // outside the gate: finite but above any sum of gated costs, so feasible matches come first
     const double infeasible = 1e6;
     std::vector<std::vector<double>> cost(unbound.size(), std::vector<double>(m_tracks.size(), infeasible));
-    ukf::Prediction p;
     for (std::size_t r = 0; r < unbound.size(); ++r) {
         const MotionVector& v = *vectors[unbound[r]];
         for (std::size_t c = 0; c < m_tracks.size(); ++c) {
@@ -107,7 +109,7 @@ std::vector<uint64_t> Tracker::associate(const std::vector<const MotionVector*>&
                 continue;
             }
             double d = 0.0;
-            if (residual(m_tracks[c], v, p, d) && d <= m_params.gateDistance) {
+            if (residual(m_tracks[c], v, d) && d <= m_params.gateDistance) {
                 cost[r][c] = d;
             }
         }
@@ -124,48 +126,32 @@ std::vector<uint64_t> Tracker::associate(const std::vector<const MotionVector*>&
     return trackOf;
 }
 
-void Tracker::kalmanUpdate(ObjectTrack& track, const ukf::Prediction& prediction, const MotionVector& v)
+void Tracker::kalmanUpdate(ObjectTrack& track, const MotionVector& v)
 {
-    const double sp = m_params.positionStd * m_params.positionStd;
-    ukf::Innovation in;
-    if (v.hasVelocity) {
-        Eigen::VectorXd z(4);
-        z << v.x, v.y, v.speed, v.heading;
-        const Eigen::Vector4d r(sp, sp, m_params.speedStd * m_params.speedStd, m_params.headingStd * m_params.headingStd);
-        in = m_ukf.innovate(prediction, measurePositionVelocity, z, r.asDiagonal().toDenseMatrix(), 3);
-    } else {
-        Eigen::VectorXd z(2);
-        z << v.x, v.y;
-        in = m_ukf.innovate(prediction, measurePosition, z, Eigen::Vector2d(sp, sp).asDiagonal().toDenseMatrix());
+    // the UKF has no position-only measurement, so a report without velocity is not fused
+    if (!v.hasVelocity) {
+        return;
     }
-    m_ukf.update(prediction, in, track.x, track.P);
+    // out-of-sequence reports are fused at the latest state time, as in project()
+    const long long timestamp = std::max(track.filter.time_us_, microseconds(v.t));
+    track.filter.ProcessMeasurement(laserOf(v, timestamp));
     track.t = std::max(track.t, v.t);
 }
 
 ObjectTrack& Tracker::initiateTrack(const MotionVector& v)
 {
-    using namespace CtraState;
-
-    const double sp = m_params.positionStd * m_params.positionStd;
-    const double su = m_params.unmeasuredStd * m_params.unmeasuredStd;
-
     ObjectTrack track;
     track.id = m_nextId++;
     track.t = v.t;
-    track.x = Eigen::VectorXd::Zero(SIZE);
-    track.x(X) = v.x;
-    track.x(Y) = v.y;
 
-    Eigen::VectorXd var = Eigen::VectorXd::Constant(SIZE, su);
-    var(X) = sp;
-    var(Y) = sp;
-    if (v.hasVelocity) {
-        track.x(HEADING) = ukf::wrapPi(v.heading);
-        track.x(SPEED) = v.speed;
-        var(HEADING) = m_params.headingStd * m_params.headingStd;
-        var(SPEED) = m_params.speedStd * m_params.speedStd;
+    // the UKF initialises from its first measurement
+    MeasurementPackage first = laserOf(v, microseconds(v.t));
+    if (!v.hasVelocity) {
+        // at rest, as the UKF's own RADAR initialisation
+        first.raw_measurements_(2) = 0.0;
+        first.raw_measurements_(3) = 0.0;
     }
-    track.P = var.asDiagonal();
+    track.filter.ProcessMeasurement(first);
 
     m_tracks.push_back(std::move(track));
     return m_tracks.back();

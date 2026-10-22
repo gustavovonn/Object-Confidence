@@ -72,3 +72,7 @@ results/
 **/__pycache__/**
 docs/
 .venv/
+
+# VisionFive 2 packaging
+vf2-setup/busybox/
+vf2-setup/initramfs.cpio.gz

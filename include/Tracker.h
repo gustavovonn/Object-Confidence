@@ -5,7 +5,6 @@
 #include "MotionTypes.h"
 #include "MotionVector.h"
 #include "ObjectTrack.h"
-#include "UnscentedKalmanFilter.h"
 
 #include <cstdint>
 #include <map>
@@ -35,15 +34,15 @@ public:
     explicit Tracker(const EngineParams& params);
 
     // Track moved to time t; the track itself is not modified
-    bool project(const ObjectTrack& track, double t, ukf::Prediction& out) const;
+    void project(const ObjectTrack& track, double t, UKF& out) const;
 
-    // Track projected to v's time and v's position residual to it [m]
-    bool residual(const ObjectTrack& track, const MotionVector& v, ukf::Prediction& out, double& residual) const;
+    // Track projected to v's time and v's position residual to it [m]; false when not finite
+    bool residual(const ObjectTrack& track, const MotionVector& v, double& residual) const;
 
     // Track id per vector of one message, 0 when none
     std::vector<uint64_t> associate(const std::vector<const MotionVector*>& vectors);
     ObjectTrack* find(uint64_t id);
-    void kalmanUpdate(ObjectTrack& track, const ukf::Prediction& prediction, const MotionVector& v);
+    void kalmanUpdate(ObjectTrack& track, const MotionVector& v);
     ObjectTrack& initiateTrack(const MotionVector& v);
     std::vector<uint64_t> retireStaleTracks(double now);
 
@@ -58,8 +57,6 @@ private:
     bool authorBound(uint64_t author, uint64_t trackId) const;
 
     EngineParams m_params;
-    ukf::UnscentedKalmanFilter m_ukf;
-    Eigen::MatrixXd m_Q;
     std::vector<ObjectTrack> m_tracks;
     std::map<SourceKey, SourceBinding> m_bindings;
     uint64_t m_nextId = 1;

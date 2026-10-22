@@ -5,8 +5,6 @@
 // "Paper 1": A Lightweight Mechanism to Attribute Confidence to V2X Messages based on Physical
 // Plausibility (CP-Artery, include/MechanismConstants.h).
 
-#include <cmath>
-
 namespace ConstantsAssociation {
 
 // Association and fusion gate on the position residual [m]: static d_max_0 of paper 1,
@@ -28,26 +26,6 @@ constexpr double FROZEN_SPEED_THRESHOLD = 2.0;       // [m/s] paper 1, reference
 constexpr double FROZEN_DISPLACEMENT_MIN = 0.3;      // [m] paper 1
 
 }  // namespace ConstantsConsistency
-
-namespace ConstantsNoise {
-
-// Process noise: magnitudes of e_a and e_w, Schubert et al., FUSION 2008, Table I
-constexpr double DEFAULT_JERK_STD = 0.5;       // [m/s^3]
-constexpr double DEFAULT_YAW_ACCEL_STD = 0.25; // [rad/s^2]
-
-// Measurement noise from the VeReMi Extension sensor errors (Kamel et al., ICC 2020, Sec. IV-B)
-// position: E0 ~ U[-5, 5] m per axis -> std 10/sqrt(12)
-constexpr double DEFAULT_POSITION_STD = 10.0 / 3.4641016151377544;  // [m]
-// heading: E0 ~ U[-20, 20] deg (at standstill) -> std 40/sqrt(12)
-constexpr double DEFAULT_HEADING_STD = (40.0 / 3.4641016151377544) * M_PI / 180.0;  // [rad]
-// speed: VeReMi error negligible; CDD SpeedValue resolution 0.01 m/s -> std 0.01/sqrt(12)
-constexpr double DEFAULT_SPEED_STD = 0.01 / 3.4641016151377544;  // [m/s]
-
-// Prior std of unmeasured state components (acceleration, yaw rate, missing velocity):
-// lisha-artery monitorAV/ukf initial covariance P = I
-constexpr double DEFAULT_UNMEASURED_STD = 1.0;
-
-}  // namespace ConstantsNoise
 
 namespace ConstantsScore {
 

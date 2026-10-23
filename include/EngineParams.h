@@ -9,6 +9,7 @@ struct EngineParams {
     // association and fusion
     double gateDistance = ConstantsAssociation::DEFAULT_GATE_DISTANCE;  // [m]
     double retireAfter = ConstantsAssociation::DEFAULT_RETIRE_AFTER;    // [s]
+    double sourceActiveWindow = ConstantsAssociation::DEFAULT_SOURCE_ACTIVE_WINDOW;  // [s]
 
     // consistency check between consecutive reports of one source
     double speedToleranceMps = ConstantsConsistency::DEFAULT_SPEED_TOLERANCE_MPS;

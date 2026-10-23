@@ -118,8 +118,8 @@ std::vector<uint64_t> Tracker::associate(const std::vector<const MotionVector*>&
     for (std::size_t r = 0; r < unbound.size(); ++r) {
         const MotionVector& v = *vectors[unbound[r]];
         for (std::size_t c = 0; c < m_tracks.size(); ++c) {
-            // an author reports each object once
-            if (authorBound(v.author, m_tracks[c].id) || (v.objectId < 0 && withCam.count(m_tracks[c].id))) {
+            // checks if the author already has a binding for this trackId
+            if (authorBound(v.author, m_tracks[c].id, v.t) || (v.objectId < 0 && withCam.count(m_tracks[c].id))) {
                 continue;
             }
             double d = 0.0;
@@ -229,12 +229,14 @@ void Tracker::recordReport(const MotionVector& v)
 
 /**
  * @brief Checks if the author already has a binding to the given trackId
+ * A binding whose source was last reported more than sourceActiveWindow before t does not count:
+ * the sender has dropped that object ID, so a new ID of the same author may continue the track.
  */
-bool Tracker::authorBound(uint64_t author, uint64_t trackId) const
+bool Tracker::authorBound(uint64_t author, uint64_t trackId, double t) const
 {
     for (auto it = m_bindings.lower_bound(SourceKey{author, std::numeric_limits<int64_t>::min()}); it != m_bindings.end() && it->first.author == author;
          ++it) {
-        if (it->second.trackId == trackId) {
+        if (it->second.trackId == trackId && t - it->second.last.time <= m_params.sourceActiveWindow) {
             return true;
         }
     }

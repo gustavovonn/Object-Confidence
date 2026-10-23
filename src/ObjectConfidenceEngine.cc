@@ -71,6 +71,10 @@ bool ObjectConfidenceEngine::plausibilityCheck(const MotionVector& v) const
     return position && velocity;
 }
 
+/**
+ * @brief Simple displacement check consistency between consecutive states
+ * @return check result, normalized velocity and excess ratio if failed
+ */
 ConsistencyResult ObjectConfidenceEngine::consistencyCheck(const MotionVector& v) const
 {
     const SourceBinding* b = m_tracker.binding(v);
@@ -90,6 +94,10 @@ bool ObjectConfidenceEngine::gateCheck(double residual) const
     return residual <= m_params.gateDistance;
 }
 
+/**
+ * @brief Pipeline for each single state motion vector: check, associate,
+ * update, score
+ */
 void ObjectConfidenceEngine::process(const MotionVector& v, uint64_t trackId, VectorRecord& r)
 {
     ObjectTrack* track = trackId != 0 ? m_tracker.find(trackId) : nullptr;
@@ -106,8 +114,11 @@ void ObjectConfidenceEngine::process(const MotionVector& v, uint64_t trackId, Ve
         }
     }
 
+    // New track
     if (!projected) {
+        // Creates the new track and starts the UKF
         const ObjectTrack& started = m_tracker.initiateTrack(v);
+
         m_tracker.bind(v, started.id);
         r.outcome = Outcome::StartedTrack;
         r.trackId = started.id;
@@ -119,6 +130,7 @@ void ObjectConfidenceEngine::process(const MotionVector& v, uint64_t trackId, Ve
     r.trackId = track->id;
     r.residual = residual;
 
+    // If the object passed the checks, update the known track with the measurement
     if (passed) {
         MaybeStage s(m_timer, "4 kalmanUpdate");
         m_tracker.kalmanUpdate(*track, v);

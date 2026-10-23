@@ -173,6 +173,8 @@ int main(int argc, char** argv)
         const std::vector<VectorRecord> records = engine->onMotionVectors(message, receiver, now);
         for (std::size_t i = 0; i < records.size(); ++i) {
             const VectorRecord& r = records[i];
+
+            // Saves the result for each motion vector. Used in the evaluations
             out << r.receiver << ',' << now << ',' << r.t << ',' << r.author << ',' << r.objectId << ','
                 << (r.origin == Origin::Cam ? "cam" : "cpm") << ',' << r.trueStation << ',' << outcomeName(r.outcome)
                 << ',' << r.trackId << ',' << r.residual << ',' << r.consistencyFailed << ',' << r.confidence << ','

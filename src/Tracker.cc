@@ -56,6 +56,10 @@ Tracker::Tracker(const EngineParams& params)
 {
 }
 
+/**
+ * @brief Projects the track to delta time t with a UKF copy
+ * i. e. the track itself is not modified
+ */
 void Tracker::project(const ObjectTrack& track, double t, UKF& out) const
 {
     // out-of-sequence reports are compared with the latest state
@@ -80,17 +84,24 @@ std::vector<uint64_t> Tracker::associate(const std::vector<const MotionVector*>&
     std::vector<std::size_t> unbound;
     for (std::size_t i = 0; i < vectors.size(); ++i) {
         auto b = m_bindings.find(keyOf(*vectors[i]));
+        // TODO: to rename our method find(), it is misleading to the stl find
         if (b != m_bindings.end() && find(b->second.trackId) != nullptr) {
+            // the engine still has the tracking for this author object id
             trackOf[i] = b->second.trackId;
         } else {
+            // do not have any associated track for this object.
+            // the object id may be retired, switched in the font or
+            // it is a new vehicle
             unbound.push_back(i);
         }
     }
+
+    // all objects ids are bounded to a track or there are no tracks yet
     if (unbound.empty() || m_tracks.empty()) {
         return trackOf;
     }
 
-    // a CAM is the station's own report: one CAM source per track
+    // a CAM object is the station itself, where the objectId was setted -1
     std::set<uint64_t> withCam;
     for (const auto& b : m_bindings) {
         if (b.first.objectId < 0) {
@@ -100,6 +111,9 @@ std::vector<uint64_t> Tracker::associate(const std::vector<const MotionVector*>&
 
     // outside the gate: finite but above any sum of gated costs, so feasible matches come first
     const double infeasible = 1e6;
+
+    // Cost matrix, i. e. the residuals between each unbound object
+    // and the existing tracks. Residual > gateDistance = impossible match
     std::vector<std::vector<double>> cost(unbound.size(), std::vector<double>(m_tracks.size(), infeasible));
     for (std::size_t r = 0; r < unbound.size(); ++r) {
         const MotionVector& v = *vectors[unbound[r]];
@@ -109,6 +123,9 @@ std::vector<uint64_t> Tracker::associate(const std::vector<const MotionVector*>&
                 continue;
             }
             double d = 0.0;
+            // euclidean distance between tracks projected in delta time and
+            // the incoming object
+            // TODO: we can save computation by projecting the tracks only once per time step, not per object
             if (residual(m_tracks[c], v, d) && d <= m_params.gateDistance) {
                 cost[r][c] = d;
             }
@@ -116,6 +133,9 @@ std::vector<uint64_t> Tracker::associate(const std::vector<const MotionVector*>&
     }
 
     std::vector<int> assignment;
+
+    // Hungarian attribution solve O(n³). It looks for the minimum sum of the costs,
+    // i. e. the best association between unbound objects and existing tracks
     HungarianAlgorithm().Solve(cost, assignment);
     for (std::size_t r = 0; r < unbound.size(); ++r) {
         const int c = assignment[r];
@@ -134,14 +154,19 @@ void Tracker::kalmanUpdate(ObjectTrack& track, const MotionVector& v)
     }
     // out-of-sequence reports are fused at the latest state time, as in project()
     const long long timestamp = std::max(track.filter.time_us_, microseconds(v.t));
+
+    // projects the track to the reported time and fuses the measurement
     track.filter.ProcessMeasurement(laserOf(v, timestamp));
     track.t = std::max(track.t, v.t);
 }
 
+/**
+ * @brief Creates a new tracks starting the UKF with the first measurement
+ */
 ObjectTrack& Tracker::initiateTrack(const MotionVector& v)
 {
     ObjectTrack track;
-    track.id = m_nextId++;
+    track.id = m_nextId++;  // local ids!
     track.t = v.t;
 
     // the UKF initialises from its first measurement
@@ -202,6 +227,9 @@ void Tracker::recordReport(const MotionVector& v)
     }
 }
 
+/**
+ * @brief Checks if the author already has a binding to the given trackId
+ */
 bool Tracker::authorBound(uint64_t author, uint64_t trackId) const
 {
     for (auto it = m_bindings.lower_bound(SourceKey{author, std::numeric_limits<int64_t>::min()}); it != m_bindings.end() && it->first.author == author;

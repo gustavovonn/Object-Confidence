@@ -53,9 +53,6 @@ public:
     const std::vector<ObjectTrack>& tracks() const { return m_tracks; }
 
 private:
-    // a source of this author, reported within sourceActiveWindow before t, already feeds the track
-    bool authorBound(uint64_t author, uint64_t trackId, double t) const;
-
     EngineParams m_params;
     std::vector<ObjectTrack> m_tracks;
     std::map<SourceKey, SourceBinding> m_bindings;

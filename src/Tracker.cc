@@ -81,17 +81,39 @@ std::vector<uint64_t> Tracker::associate(const std::vector<const MotionVector*>&
 {
     std::vector<uint64_t> trackOf(vectors.size(), 0);
 
+    // the objects of one message are distinct (ETSI TS 103 324): they never share a
+    // track. heldBy: track -> vector of this message holding it
+    std::map<uint64_t, std::size_t> heldBy;
     std::vector<std::size_t> unbound;
     for (std::size_t i = 0; i < vectors.size(); ++i) {
         auto b = m_bindings.find(keyOf(*vectors[i]));
         // TODO: to rename our method find(), it is misleading to the stl find
-        if (b != m_bindings.end() && find(b->second.trackId) != nullptr) {
-            // the engine still has the tracking for this author object id
-            trackOf[i] = b->second.trackId;
-        } else {
+        ObjectTrack* track = b != m_bindings.end() ? find(b->second.trackId) : nullptr;
+        if (track == nullptr) {
             // do not have any associated track for this object.
             // the object id may be retired, switched in the font or
             // it is a new vehicle
+            unbound.push_back(i);
+            continue;
+        }
+        // the engine still has the tracking for this author object id
+        auto held = heldBy.find(track->id);
+        if (held == heldBy.end()) {
+            heldBy[track->id] = i;
+            trackOf[i] = track->id;
+            continue;
+        }
+        // two bound objects of this message on one track: the closer keeps it, the other is associated again
+        double di = 0.0;
+        double dh = 0.0;
+        residual(*track, *vectors[i], di);
+        residual(*track, *vectors[held->second], dh);
+        if (di < dh) {
+            trackOf[held->second] = 0;
+            unbound.push_back(held->second);
+            held->second = i;
+            trackOf[i] = track->id;
+        } else {
             unbound.push_back(i);
         }
     }
@@ -118,8 +140,8 @@ std::vector<uint64_t> Tracker::associate(const std::vector<const MotionVector*>&
     for (std::size_t r = 0; r < unbound.size(); ++r) {
         const MotionVector& v = *vectors[unbound[r]];
         for (std::size_t c = 0; c < m_tracks.size(); ++c) {
-            // checks if the author already has a binding for this trackId
-            if (authorBound(v.author, m_tracks[c].id, v.t) || (v.objectId < 0 && withCam.count(m_tracks[c].id))) {
+            // a track already held by another object of this message, or a second CAM source
+            if (heldBy.count(m_tracks[c].id) || (v.objectId < 0 && withCam.count(m_tracks[c].id))) {
                 continue;
             }
             double d = 0.0;
@@ -225,22 +247,6 @@ void Tracker::recordReport(const MotionVector& v)
     if (it != m_bindings.end()) {
         it->second.last = reportOf(v);
     }
-}
-
-/**
- * @brief Checks if the author already has a binding to the given trackId
- * A binding whose source was last reported more than sourceActiveWindow before t does not count:
- * the sender has dropped that object ID, so a new ID of the same author may continue the track.
- */
-bool Tracker::authorBound(uint64_t author, uint64_t trackId, double t) const
-{
-    for (auto it = m_bindings.lower_bound(SourceKey{author, std::numeric_limits<int64_t>::min()}); it != m_bindings.end() && it->first.author == author;
-         ++it) {
-        if (it->second.trackId == trackId && t - it->second.last.time <= m_params.sourceActiveWindow) {
-            return true;
-        }
-    }
-    return false;
 }
 
 ObjectTrack* Tracker::find(uint64_t id)

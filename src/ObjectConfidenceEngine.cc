@@ -126,7 +126,9 @@ void ObjectConfidenceEngine::process(const MotionVector& v, uint64_t trackId, Ve
         return;
     }
 
-    const bool bound = m_tracker.binding(v) != nullptr;
+    // a source that lost its track to another object of its message is bound again where it is fused
+    const SourceBinding* binding = m_tracker.binding(v);
+    const bool bound = binding != nullptr && binding->trackId == track->id;
     r.trackId = track->id;
     r.residual = residual;
 

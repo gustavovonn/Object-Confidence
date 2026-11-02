@@ -2,8 +2,10 @@
 #define MESSAGE_ADAPTER_H_
 
 // Received CAM / CPM content -> MotionVector in a shared local East-North plane.
-// Every vector describes the object's bounding-box centre with its ground velocity there.
+// Every vector describes the object's bounding-box centre; speed and heading pass as reported,
+// heading wrapped to (-pi, pi] clockwise from north.
 
+#include "Angles.h"
 #include "Constants.h"
 #include "LocalTangentPlane.h"
 #include "MotionVector.h"
@@ -21,8 +23,6 @@ struct CamReport {
     bool hasVelocity = false;
     double speed = 0.0;        // [m/s]
     double headingDeg = 0.0;   // clockwise from true north
-    bool hasYawRate = false;
-    double yawRateDeg = 0.0;   // [deg/s] positive to the left (CDD YawRate)
     double length = 0.0;       // [m], <= 0 when unavailable
 };
 
@@ -47,12 +47,6 @@ namespace MessageAdapter {
 inline PlanarVector headingVector(double headingRad)
 {
     return {std::sin(headingRad), std::cos(headingRad)};
-}
-
-// compass heading of an East-North velocity
-inline double headingOf(const PlanarVector& v)
-{
-    return std::atan2(v.east, v.north);
 }
 
 // CAM: reference point is the centre of the vehicle's front side (EN 302 637-2);
@@ -81,17 +75,12 @@ inline MotionVector fromCam(const CamReport& cam, const LocalTangentPlane& plane
     v.x = centre.east;
     v.y = centre.north;
 
+    // no velocity transport: v_c = v_front + omega x r needs the front's true velocity, and the CAM
+    // heading is that of the vehicle movement (EN 302 637-2), not of its front
     if (cam.hasVelocity) {
-        // CDD yaw rate is positive to the left, i.e. counter-clockwise about Up
-        const double omega = cam.hasYawRate ? cam.yawRateDeg * ConstantsWGS84::DEG_TO_RAD : 0.0;
-        const PlanarVector vFront{cam.speed * u.east, cam.speed * u.north};
-
-        // transport theorem, rigid body: v_c = v_front + omega x r (no motion relative to the body)
-        const PlanarVector vCentre = transportVelocity(vFront, PlanarVector{}, omega, r);
-
         v.hasVelocity = true;
-        v.speed = std::hypot(vCentre.east, vCentre.north);
-        v.heading = v.speed > 0.0 ? headingOf(vCentre) : heading;
+        v.speed = cam.speed;
+        v.heading = Angles::wrapPi(heading);
     }
     return v;
 }
@@ -116,20 +105,12 @@ inline MotionVector fromCpmObject(const CpmObjectReport& obj, const LocalTangent
     v.x = p.east;
     v.y = p.north;
 
+    // no velocity transport: TS 103 324 7.1.8.3 gives the velocity relative to ground, in the
+    // non-rotating East-North-Up frame of 7.1.8.1
     if (obj.hasVelocity) {
-        const double direction = obj.directionDeg * ConstantsWGS84::DEG_TO_RAD;
-        const PlanarVector vReported{obj.speed * std::cos(direction), obj.speed * std::sin(direction)};
-
-        // transport theorem, frame of the sender: v = v_O + v_rel + omega x r
-        // TS 103 324 7.1.8.3: velocity is relative to ground -> v_O = 0
-        // TS 103 324 7.1.8.1: East-North-Up axes do not rotate -> omega = 0
-        const PlanarVector vFrame{};
-        const double omegaFrame = 0.0;
-        const PlanarVector vGround = transportVelocity(vFrame, vReported, omegaFrame, r);
-
         v.hasVelocity = true;
-        v.speed = std::hypot(vGround.east, vGround.north);
-        v.heading = headingOf(vGround);
+        v.speed = obj.speed;
+        v.heading = Angles::wrapPi(M_PI / 2.0 - obj.directionDeg * ConstantsWGS84::DEG_TO_RAD);
     }
     return v;
 }

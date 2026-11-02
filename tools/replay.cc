@@ -59,8 +59,6 @@ MotionVector toMotionVector(const Row& row, const LocalTangentPlane& plane)
         cam.hasVelocity = f[HAS_VELOCITY] > 0.5;
         cam.speed = f[SPEED];
         cam.headingDeg = f[HEADING];
-        cam.hasYawRate = std::isfinite(f[YAW_RATE]);
-        cam.yawRateDeg = cam.hasYawRate ? f[YAW_RATE] : 0.0;
         cam.length = std::isfinite(f[LENGTH]) ? f[LENGTH] : 0.0;
         return MessageAdapter::fromCam(cam, plane);
     }

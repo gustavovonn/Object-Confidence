@@ -3,13 +3,14 @@
 
 #include "ConsistencyCheck.h"
 #include "EngineParams.h"
+#include "IScorer.h"
 #include "MotionVector.h"
-#include "Scorer.h"
 #include "StageTimer.h"
 #include "Tracker.h"
 #include "VectorRecord.h"
 
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 // Receiver-local confidence of fused object trajectories.
@@ -34,7 +35,7 @@ public:
     bool predictiveCheck(double residual) const;
 
     const Tracker& tracker() const { return m_tracker; }
-    const Scorer& scorer() const { return m_scorer; }
+    const IScorer& scorer() const { return *m_scorer; }
     const EngineParams& params() const { return m_params; }
 
     // Per-stage timing; null disables it
@@ -45,7 +46,7 @@ private:
 
     EngineParams m_params;
     Tracker m_tracker;
-    Scorer m_scorer;
+    std::unique_ptr<IScorer> m_scorer;
     ConsistencyThresholds m_consistency;
     StageTimer* m_timer = nullptr;
 };

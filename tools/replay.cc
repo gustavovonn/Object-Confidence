@@ -1,14 +1,23 @@
 // Replays flattened receptions (scripts/flatten_dataset.py) through one engine per receiver.
 // Usage: replay <receptions.csv> <records.csv> [--profile] [--max-msgs N] [--csv-out <file>] [--dataset <name>]
 //               [--retire-after S]
+//               [--scorer beta|gaussian-nis|windowed-nis]
+//               [--innovation-sigma <m>] [--forgetting <lambda>]
+//               [--nis-window <W>]
 //   --profile       per-stage latency report
 //   --max-msgs      stop after N messages
 //   --csv-out       append the per-stage latency rows to <file> (header when new); implies --profile
 //   --dataset       name in those rows; default: receptions file name without extension
 //   --retire-after  track retirement [s]; default EngineParams::retireAfter
+//   --scorer <kind> confidence scorer: beta (default) | gaussian-nis | windowed-nis
+//   --innovation-sigma  position innovation s.d. [m] for NIS scorers
+//   --forgetting  forgetting factor lambda for Beta / Gaussian NIS
+//   --nis-window  window size W for Windowed NIS (default 10)
+
 
 #include "MessageAdapter.h"
 #include "ObjectConfidenceEngine.h"
+#include "ScorerFactory.h"
 
 #include <cmath>
 #include <cstdio>
@@ -90,7 +99,6 @@ const char* outcomeName(Outcome o)
     return "?";
 }
 
-// file name without directory and extension
 std::string stem(const std::string& path)
 {
     const std::size_t slash = path.find_last_of('/');
@@ -102,9 +110,11 @@ std::string stem(const std::string& path)
 int usage(const char* program)
 {
     std::fprintf(stderr,
-                 "usage: %s <receptions.csv> <records.csv> [--profile] [--max-msgs N] [--csv-out <file>] "
-                 "[--dataset <name>] [--retire-after S]\n",
-                 program);
+        "usage: %s <receptions.csv> <records.csv>\n"
+        "          [--profile] [--max-msgs N] [--csv-out <file>] [--dataset <name>]\n"
+        "          [--retire-after S] [--scorer beta|gaussian-nis|windowed-nis]\n"
+        "          [--innovation-sigma <m>] [--forgetting <lambda>] [--nis-window <W>]\n",
+        program);
     return EXIT_FAILURE;
 }
 
@@ -115,6 +125,7 @@ int main(int argc, char** argv)
     if (argc < 3) {
         return usage(argv[0]);
     }
+
     bool profile = false;
     std::size_t maxMsgs = 0;  // 0: all
     std::string csvOut;
@@ -133,6 +144,19 @@ int main(int argc, char** argv)
             dataset = argv[++i];
         } else if (arg == "--retire-after" && i + 1 < argc) {
             params.retireAfter = std::strtod(argv[++i], nullptr);
+        } else if (arg == "--scorer" && i + 1 < argc) {
+            try {
+                params.scorer = parseScorerKind(argv[++i]);
+            } catch (const std::invalid_argument& ex) {
+                std::fprintf(stderr, "error: %s\n", ex.what());
+                return EXIT_FAILURE;
+            }
+        } else if (arg == "--innovation-sigma" && i + 1 < argc) {
+            params.innovationSigma = std::strtod(argv[++i], nullptr);
+        } else if (arg == "--forgetting" && i + 1 < argc) {
+            params.forgetting = std::strtod(argv[++i], nullptr);
+        } else if (arg == "--nis-window" && i + 1 < argc) {
+            params.nisWindowSize = static_cast<int>(std::strtol(argv[++i], nullptr, 10));
         } else {
             return usage(argv[0]);
         }
@@ -218,7 +242,9 @@ int main(int argc, char** argv)
     }
     flush(currentReceiver, lastRcv);
 
-    std::printf("%zu messages, %zu motion vectors\n", messages, vectors);
+    std::printf("%zu messages, %zu motion vectors [scorer: %s]\n",
+                messages, vectors, scorerKindName(params.scorer));
+
     if (profile) {
         timer.report("per-stage latency", 100000.0);
     }

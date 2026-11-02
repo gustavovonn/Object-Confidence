@@ -19,7 +19,7 @@ constexpr double DEFAULT_RETIRE_AFTER = 1.5;
 
 // A source unreported for longer than this no longer holds its author's place on a track [s]:
 // ETSI TS 103 324 V2.1.1 T_GenCpmMax, the longest a perceived vehicle may go without inclusion
-// in a CPM, so the sender has dropped its object 
+// in a CPM, so the sender has dropped its object
 constexpr double DEFAULT_SOURCE_ACTIVE_WINDOW = 1.0;
 
 }  // namespace ConstantsAssociation
@@ -47,6 +47,21 @@ namespace ConstantsScore {
 
 // Beta reputation with forgetting (Josang & Ismail, Bled 2002, Sec. 2.6); lambda = 0.9 as paper 1
 constexpr double DEFAULT_FORGETTING = 0.9;
+
+// Gaussian NIS and Windowed NIS: position innovation s.d. [m].
+// Calibrate on fault-free data so that the median NIS ≈ 1 (chi-squared(2) median ≈ 1.39).
+// A conservative starting point for vehicular datasets is 3 m.
+constexpr double DEFAULT_INNOVATION_SIGMA = 3.0;
+
+// Windowed NIS: number of most-recent samples kept per track.
+constexpr int DEFAULT_NIS_WINDOW_SIZE = 10;
+
+// Windowed NIS: warm-up guard — return 0.5 until this many samples are in the window.
+constexpr int DEFAULT_NIS_MIN_SAMPLES = 3;
+
+// NIS chi-squared(2) threshold at alpha = 0.05 (95th percentile).
+// Used by both GaussianNIS (as the neutral point of the logistic) and WindowedNIS.
+constexpr double DEFAULT_NIS_THRESHOLD = 5.991;
 
 }  // namespace ConstantsScore
 

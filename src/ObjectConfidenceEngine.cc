@@ -2,11 +2,12 @@
 
 #include "CoordinatePolicies.h"
 #include "MechanismConstants.h"
+#include "ScorerFactory.h"
 
 #include <cmath>
 
 ObjectConfidenceEngine::ObjectConfidenceEngine(EngineParams params)
-    : m_params(params), m_tracker(params), m_scorer(params.forgetting)
+    : m_params(params), m_tracker(params), m_scorer(makeScorer(params))
 {
     m_consistency.speedTolerance = params.speedToleranceMps;
     m_consistency.minInterFrame = ConstantsConsistency::MIN_INTER_FRAME_TIME;
@@ -24,7 +25,7 @@ std::vector<VectorRecord> ObjectConfidenceEngine::onMotionVectors(const std::vec
     {
         MaybeStage s(m_timer, "0 retire");
         for (uint64_t id : m_tracker.retireStaleTracks(now)) {
-            m_scorer.forget(id);
+            m_scorer->forget(id);
         }
     }
 
@@ -123,7 +124,7 @@ void ObjectConfidenceEngine::process(const MotionVector& v, uint64_t trackId, Ve
         m_tracker.bind(v, started.id);
         r.outcome = Outcome::StartedTrack;
         r.trackId = started.id;
-        r.confidence = m_scorer.confidenceOf(started.id);
+        r.confidence = m_scorer->confidenceOf(started.id);
         return;
     }
 
@@ -144,8 +145,14 @@ void ObjectConfidenceEngine::process(const MotionVector& v, uint64_t trackId, Ve
 
     {
         MaybeStage s(m_timer, "5 score");
-        r.outcome = passed ? Outcome::Fused : Outcome::Rejected;
-        r.confidence = passed ? m_scorer.hit(r.trackId) : m_scorer.miss(r.trackId);
+        // Pass the residual to the scorer; NIS-based scorers use it, Beta ignores it.
+        if (passed) {
+            r.outcome = Outcome::Fused;
+            r.confidence = m_scorer->hit(r.trackId, residual);
+        } else {
+            r.outcome = Outcome::Rejected;
+            r.confidence = m_scorer->miss(r.trackId, residual);
+        }
     }
 
     m_tracker.recordReport(v);

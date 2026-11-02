@@ -23,7 +23,7 @@ struct EngineParams {
 
     // consistency check between consecutive reports of one source
     double speedToleranceMps = ConstantsConsistency::DEFAULT_SPEED_TOLERANCE_MPS;
-    bool   enableConsistency = true;
+    bool enableConsistency = true;
 
     // confidence scorer selection
     ScorerKind scorer = ScorerKind::Beta;
@@ -35,8 +35,9 @@ struct EngineParams {
     double innovationSigma = ConstantsScore::DEFAULT_INNOVATION_SIGMA;
 
     // Windowed NIS
-    int  nisWindowSize  = ConstantsScore::DEFAULT_NIS_WINDOW_SIZE;
-    int  nisMinSamples  = ConstantsScore::DEFAULT_NIS_MIN_SAMPLES;
+    int nisWindowSize = ConstantsScore::DEFAULT_NIS_WINDOW_SIZE;
+    int nisMinSamples = ConstantsScore::DEFAULT_NIS_MIN_SAMPLES;
+    double nisThreshold = ConstantsScore::DEFAULT_NIS_THRESHOLD;
 
     // Gaussian NIS logistic parameters
     double gaussianLogitScale = 0.5;

@@ -54,3 +54,24 @@ Not in any stage, so only in `onMotionVectors`: `initiateTrack` for vectors that
 On the board, run `cd /bench && ./run_benchmarks_riscv.sh` (options: `--profile <subset>`,
 `--repeat N`, `--core <id>`, `--max-msgs N`). The same script runs on the host against
 `build/replay`.
+
+## Scorer Comparison Benchmark
+
+`scripts/compare_scorers.py` benchmarks and compares the available scoring algorithms (beta, gaussian-nis, and windowed-nis) side-by-side on a given receptions.csv dataset.
+
+```bash
+python3 scripts/compare_scorers.py [receptions.csv] [options]
+```
+
+### Features & CLI Options
+
+- Automated Multi-Variant Replay: Executes the replay executable sequentially across all supported scorer implementations (beta, gaussian-nis, and windowed-nis).
+- Comprehensive Detection Evaluation: Evaluates predictions against dataset ground truth (attackType != 0 vs. confidence > threshold), computing side-by-side Accuracy, Precision, Recall, F1 Score, and AUC-ROC.
+- Precision-Recall Curve Plotting: Generates and exports Precision-Recall curves to an image file (--plot [output_path.png]).
+- Engine Hyperparameter Forwarding: Supports tuning scorer parameters on the fly via direct forwarding to replay:
+    - --threshold <val>: Classification confidence cutoff (default: 0.5).
+    - --max-msgs <N>: Truncate replay run after $N$ messages.
+    - --innovation-sigma <m>: Set position innovation standard deviation (meters) for NIS calculations.
+    - --forgetting <lambda>: Set exponential forgetting factor for log-likelihood updates.
+    - --nis-window <W>: Set circular buffer window size for windowed-nis (default: 10).
+    - --keep-records: Retain intermediate records_<scorer>.csv execution logs after evaluation completes.

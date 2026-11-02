@@ -23,18 +23,18 @@ inline std::unique_ptr<IScorer> makeScorer(const EngineParams& params)
         case ScorerKind::GaussianNIS: {
             GaussianNISScorer::Params p;
             p.innovationSigma = params.innovationSigma;
-            p.forgetting       = params.forgetting;
-            p.logitScale       = params.gaussianLogitScale;
-            p.logitShift       = params.gaussianLogitShift;
+            p.forgetting = params.forgetting;
+            p.logitScale = params.gaussianLogitScale;
+            p.logitShift = params.gaussianLogitShift;
             return std::make_unique<GaussianNISScorer>(p);
         }
 
         case ScorerKind::WindowedNIS: {
             WindowedNISScorer::Params p;
             p.innovationSigma = params.innovationSigma;
-            p.windowSize       = params.nisWindowSize;
-            p.nisThreshold     = ConstantsScore::DEFAULT_NIS_THRESHOLD;
-            p.minSamples       = params.nisMinSamples;
+            p.windowSize = params.nisWindowSize;
+            p.nisThreshold = params.nisThreshold;
+            p.minSamples = params.nisMinSamples;
             return std::make_unique<WindowedNISScorer>(p);
         }
     }

@@ -3,7 +3,7 @@
 //               [--retire-after S]
 //               [--scorer beta|gaussian-nis|windowed-nis]
 //               [--innovation-sigma <m>] [--forgetting <lambda>]
-//               [--nis-window <W>]
+//               [--nis-window <W>] [--nis-threshold <tau>] [--nis-min-samples <M>]
 //   --profile       per-stage latency report
 //   --max-msgs      stop after N messages
 //   --csv-out       append the per-stage latency rows to <file> (header when new); implies --profile
@@ -13,7 +13,8 @@
 //   --innovation-sigma  position innovation s.d. [m] for NIS scorers
 //   --forgetting  forgetting factor lambda for Beta / Gaussian NIS
 //   --nis-window  window size W for Windowed NIS (default 10)
-
+//   --nis-threshold  chi-squared NIS gate tau for Windowed NIS (default 5.991, chi^2(2) alpha=0.05)
+//   --nis-min-samples  warm-up guard: return 0.5 until this many samples in window (default 3)
 
 #include "MessageAdapter.h"
 #include "ObjectConfidenceEngine.h"
@@ -114,6 +115,7 @@ int usage(const char* program)
         "          [--profile] [--max-msgs N] [--csv-out <file>] [--dataset <name>]\n"
         "          [--retire-after S] [--scorer beta|gaussian-nis|windowed-nis]\n"
         "          [--innovation-sigma <m>] [--forgetting <lambda>] [--nis-window <W>]\n",
+        "          [--nis-window <W>] [--nis-threshold <tau>] [--nis-min-samples <M>]\n",
         program);
     return EXIT_FAILURE;
 }
@@ -157,6 +159,10 @@ int main(int argc, char** argv)
             params.forgetting = std::strtod(argv[++i], nullptr);
         } else if (arg == "--nis-window" && i + 1 < argc) {
             params.nisWindowSize = static_cast<int>(std::strtol(argv[++i], nullptr, 10));
+        } else if (arg == "--nis-threshold" && i + 1 < argc) {
+            params.nisThreshold = std::strtod(argv[++i], nullptr);
+        } else if (arg == "--nis-min-samples" && i + 1 < argc) {
+            params.nisMinSamples = static_cast<int>(std::strtol(argv[++i], nullptr, 10));
         } else {
             return usage(argv[0]);
         }

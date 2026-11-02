@@ -3,6 +3,7 @@
 # no sensor errors, replayed through the engine, then scored by scripts/detect_eval.py and
 # scripts/association_eval.py.
 # Fault parameters: libs/Artery-Dataset-Generator/config/faults.toml, `types` replaced per subset.
+# Honest, with no faulty vehicle (empty `types`), is the fault-free baseline.
 # Usage: scripts/run_preliminary.sh [groundtruth dir] [name]
 
 set -euo pipefail
@@ -13,7 +14,7 @@ GT=$(realpath "${1:-$GENERATOR/data/groundtruth/lust-full-run0}")
 OUT=$(realpath -m "results/${2:-$(basename "$GT")}")
 PYTHON=.venv/bin/python   # detect_eval.py needs matplotlib (requirements.txt)
 [ -x "$PYTHON" ] || { echo "missing $PYTHON: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt" >&2; exit 1; }
-TYPES=(ConstPos ConstPosOffset RandomPos RandomPosOffset ConstSpeed ConstSpeedOffset RandomSpeed RandomSpeedOffset)
+TYPES=(Honest ConstPos ConstPosOffset RandomPos RandomPosOffset ConstSpeed ConstSpeedOffset RandomSpeed RandomSpeedOffset)
 
 for type in "${TYPES[@]}"; do
     dir="$OUT/$type"
@@ -26,7 +27,8 @@ src, dst, gt, subset, kind = sys.argv[1:]
 text = open(src).read()
 text = re.sub(r'^input = .*$', f'input = "{gt}"', text, flags=re.M)
 text = re.sub(r'^output = .*$', f'output = "{subset}"', text, flags=re.M)
-text = re.sub(r'^types = \[.*?\]', f'types = ["{kind}"]', text, flags=re.M | re.S)
+types = "[]" if kind == "Honest" else f'["{kind}"]'
+text = re.sub(r'^types = \[.*?\]', f'types = {types}', text, flags=re.M | re.S)
 text = re.sub(r'\[sensor_errors\].*?(?=\n\[)', '', text, flags=re.S)
 open(dst, "w").write(text)
 EOF

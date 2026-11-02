@@ -10,13 +10,15 @@ one decision per received vector, flagged when the confidence of its track after
 is below 0.5; positive when the vector's content was falsified (attackType > 0; a CPM object
 takes its message's). Precision, recall, FPR and accuracy in %, F1 in [0, 1], `-` when undefined
 (no positives: speed faults never reach a CPM); counts summed over the subset.
-One table over all vectors, one over CAMs, one over CPM objects.
+One table over all vectors, one over CAMs, one over CPM objects. The fault-free baseline (Honest)
+comes first and stays out of the total, which sums the fault subsets.
 """
 import csv
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
+BASELINE = "Honest"
 TYPES = ["ConstPos", "ConstPosOffset", "RandomPos", "RandomPosOffset",
          "ConstSpeed", "ConstSpeedOffset", "RandomSpeed", "RandomSpeedOffset"]
 
@@ -86,14 +88,15 @@ def row(name, c):
 def table(root):
     # one subset in memory at a time: {kind: {origin: counts}}
     per = {}
-    for kind in TYPES:
+    for kind in [BASELINE] + TYPES:
         rows = load(root / kind / "records.csv")
         per[kind] = {origin: counts(rows, origin) for _, origin in ORIGINS}
     lines = []
     for title, origin in ORIGINS:
         lines += [f"## {title}", "",
                   "| Fault | Vectors | Positives | F1 | FPR (%) | Accuracy (%) | Precision (%) | Recall (%) |",
-                  "|---|---|---|---|---|---|---|---|"]
+                  "|---|---|---|---|---|---|---|---|",
+                  row(BASELINE, per[BASELINE][origin])]
         total = [0, 0, 0, 0]
         for kind in TYPES:
             c = per[kind][origin]

@@ -1,5 +1,6 @@
 #include "Tracker.h"
 
+#include "Angles.h"
 #include "Constants.h"
 #include "Hungarian.h"
 #include "measurement_package.h"
@@ -32,10 +33,11 @@ long long microseconds(double t)
     return std::llround(t * 1e6);
 }
 
-// UKF yaw is counter-clockwise from east; reports carry a heading clockwise from north
-double yawOf(double heading)
+// compass angle (clockwise from north) -> ENU yaw (counter-clockwise from east), the UKF's
+// convention, wrapped to [-pi, pi]
+double compassToEnuYaw(double compassRad)
 {
-    return M_PI / 2.0 - heading;
+    return Angles::wrapPi(M_PI / 2.0 - compassRad);
 }
 
 // UKF's LASER measurement: [px, py, v, yaw]
@@ -44,7 +46,7 @@ MeasurementPackage laserOf(const MotionVector& v, long long timestamp)
     MeasurementPackage m;
     m.sensor_type_ = MeasurementPackage::LASER;
     m.raw_measurements_ = Eigen::VectorXd(4);
-    m.raw_measurements_ << v.x, v.y, v.speed, yawOf(v.heading);
+    m.raw_measurements_ << v.x, v.y, v.speed, compassToEnuYaw(v.heading);
     m.timestamp_ = timestamp;
     return m;
 }

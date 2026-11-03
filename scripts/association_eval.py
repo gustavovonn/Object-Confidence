@@ -30,7 +30,7 @@ TYPES = ["ConstPos", "ConstPosOffset", "RandomPos", "RandomPosOffset",
          "ConstSpeed", "ConstSpeedOffset", "RandomSpeed", "RandomSpeedOffset"]
 
 # include/MechanismConstants.h, ConstantsAssociation::DEFAULT_RETIRE_AFTER [s]
-RETIRE_AFTER = 3.1
+RETIRE_AFTER = 1.5
 
 K_COLUMNS = (1, 2, 3, 4)  # last column: k >= 4
 

@@ -1,9 +1,11 @@
 // Replays flattened receptions (scripts/flatten_dataset.py) through one engine per receiver.
 // Usage: replay <receptions.csv> <records.csv> [--profile] [--max-msgs N] [--csv-out <file>] [--dataset <name>]
-//   --profile   per-stage latency report
-//   --max-msgs  stop after N messages
-//   --csv-out   append the per-stage latency rows to <file> (header when new); implies --profile
-//   --dataset   name in those rows; default: receptions file name without extension
+//               [--retire-after S]
+//   --profile       per-stage latency report
+//   --max-msgs      stop after N messages
+//   --csv-out       append the per-stage latency rows to <file> (header when new); implies --profile
+//   --dataset       name in those rows; default: receptions file name without extension
+//   --retire-after  track retirement [s]; default EngineParams::retireAfter
 
 #include "MessageAdapter.h"
 #include "ObjectConfidenceEngine.h"
@@ -101,7 +103,7 @@ int usage(const char* program)
 {
     std::fprintf(stderr,
                  "usage: %s <receptions.csv> <records.csv> [--profile] [--max-msgs N] [--csv-out <file>] "
-                 "[--dataset <name>]\n",
+                 "[--dataset <name>] [--retire-after S]\n",
                  program);
     return EXIT_FAILURE;
 }
@@ -117,6 +119,7 @@ int main(int argc, char** argv)
     std::size_t maxMsgs = 0;  // 0: all
     std::string csvOut;
     std::string dataset = stem(argv[1]);
+    EngineParams params;
     for (int i = 3; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--profile") {
@@ -128,6 +131,8 @@ int main(int argc, char** argv)
             profile = true;
         } else if (arg == "--dataset" && i + 1 < argc) {
             dataset = argv[++i];
+        } else if (arg == "--retire-after" && i + 1 < argc) {
+            params.retireAfter = std::strtod(argv[++i], nullptr);
         } else {
             return usage(argv[0]);
         }
@@ -195,7 +200,7 @@ int main(int argc, char** argv)
         if (!engine || row.receiver != currentReceiver) {
             flush(currentReceiver, lastRcv);
             currentReceiver = row.receiver;
-            engine = std::make_unique<ObjectConfidenceEngine>();
+            engine = std::make_unique<ObjectConfidenceEngine>(params);
             if (profile) {
                 engine->setStageTimer(&timer);
             }

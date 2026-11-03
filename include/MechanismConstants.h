@@ -11,8 +11,8 @@ namespace ConstantsAssociation {
 // calibrated on the fault-free VeReMi Extension subset (Sec. V-A)
 constexpr double DEFAULT_GATE_DISTANCE = 4.3506;
 
-// Track retired after this long without a fused report [s]: paper 1 MAX_INTER_FRAME_TIME (F2MD)
-constexpr double DEFAULT_RETIRE_AFTER = 3.1;
+// Track retired after this long without a fused report [s]
+constexpr double DEFAULT_RETIRE_AFTER = 1.5;
 
 // A source unreported for longer than this no longer holds its author's place on a track [s]:
 // ETSI TS 103 324 V2.1.1 T_GenCpmMax, the longest a perceived vehicle may go without inclusion

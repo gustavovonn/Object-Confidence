@@ -126,8 +126,9 @@ public:
    * @param z_pred The predicted measurement mean
    * @param S The measurement covariance matrix
    * @param R The measurement noise covariance matrix
+   * @param angle Index of the angle in the measurement: 3 (lidar yaw) or 1 (radar phi)
    */
-  void PredictMeasurement(int n_z, const MatrixXd &Zsig, VectorXd &z_pred, MatrixXd &S, MatrixXd &R) ;
+  void PredictMeasurement(int n_z, const MatrixXd &Zsig, VectorXd &z_pred, MatrixXd &S, MatrixXd &R, int angle) ;
 
   /**
    * Updates the state and the state covariance matrix using a radar measurement
@@ -141,8 +142,9 @@ public:
    * @param z_pred The predictionof measurement at k+1
    * @param S The measurement covariance matrix
    * @param Zsig The matrix for sigma points in measurement space
+   * @param angle Index of the angle in the measurement: 3 (lidar yaw) or 1 (radar phi)
    */
-  void UpdateState(const VectorXd &z, const VectorXd &z_pred, const MatrixXd &S, const MatrixXd &Zsig);
+  void UpdateState(const VectorXd &z, const VectorXd &z_pred, const MatrixXd &S, const MatrixXd &Zsig, int angle);
 
   /**
    * Calculate augmented sigma points: Xsig_agu_

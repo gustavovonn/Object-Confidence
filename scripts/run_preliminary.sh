@@ -4,14 +4,26 @@
 # scripts/association_eval.py.
 # Fault parameters: libs/Artery-Dataset-Generator/config/faults.toml, `types` replaced per subset.
 # Honest, with no faulty vehicle (empty `types`), is the fault-free baseline.
-# Usage: scripts/run_preliminary.sh [groundtruth dir] [name]
+# Default ground truth: the generator's CONFIG run RUN, data/groundtruth/<CONFIG>-run<RUN>; when missing
+# it is simulated first with the generator's scripts (docker setup, build, run).
+# Usage: [CONFIG=lust-full] [RUN=0] scripts/run_preliminary.sh [groundtruth dir] [name]
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 GENERATOR=$(realpath "${GENERATOR:-libs/Artery-Dataset-Generator}")
-GT=$(realpath "${1:-$GENERATOR/data/groundtruth/lust-full-run0}")
+CONFIG=${CONFIG:-lust-full}  # generator omnetpp.ini config
+RUN=${RUN:-0}                # its run number (seed)
+GT=$(realpath -m "${1:-$GENERATOR/data/groundtruth/$CONFIG-run$RUN}")
 OUT=$(realpath -m "results/${2:-$(basename "$GT")}")
+
+if [ ! -d "$GT" ]; then
+    [ -z "${1:-}" ] || { echo "missing $GT" >&2; exit 1; }
+    echo "missing $GT: simulating config $CONFIG, run $RUN"
+    "$GENERATOR/scripts/setup_docker.sh"
+    "$GENERATOR/scripts/build.sh"
+    "$GENERATOR/scripts/run.sh" -c "$CONFIG" -r "$RUN"
+fi
 PYTHON=.venv/bin/python   # detect_eval.py needs matplotlib (requirements.txt)
 [ -x "$PYTHON" ] || { echo "missing $PYTHON: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt" >&2; exit 1; }
 TYPES=(Honest ConstPos ConstPosOffset RandomPos RandomPosOffset ConstSpeed ConstSpeedOffset RandomSpeed RandomSpeedOffset)

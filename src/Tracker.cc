@@ -71,11 +71,20 @@ void Tracker::project(const ObjectTrack& track, double t, UKF& out) const
     out.Prediction(dt);
 }
 
-bool Tracker::residual(const ObjectTrack& track, const MotionVector& v, double& residual) const
+bool Tracker::residual(const ObjectTrack& track, const MotionVector& v, double& residual, double* along,
+                       double* across) const
 {
     UKF predicted;
     project(track, v.t, predicted);
-    residual = std::hypot(v.x - predicted.x_(0), v.y - predicted.x_(1));
+    const double dx = v.x - predicted.x_(0);
+    const double dy = v.y - predicted.x_(1);
+    residual = std::hypot(dx, dy);
+    if (along != nullptr && across != nullptr) {
+        // components along and across the projected track yaw (ENU)
+        const double yaw = predicted.x_(3);
+        *along = dx * std::cos(yaw) + dy * std::sin(yaw);
+        *across = -dx * std::sin(yaw) + dy * std::cos(yaw);
+    }
     return std::isfinite(residual);
 }
 
@@ -136,8 +145,8 @@ std::vector<uint64_t> Tracker::associate(const std::vector<const MotionVector*>&
     // outside the gate: finite but above any sum of gated costs, so feasible matches come first
     const double infeasible = 1e6;
 
-    // Cost matrix, i. e. the residuals between each unbound object
-    // and the existing tracks. Residual > gateDistance = impossible match
+    // Cost matrix, i. e. the residuals between each unbound object and the existing tracks.
+    // Feasible inside an ellipse: gateAlong along the projected track yaw, gateAcross across it
     std::vector<std::vector<double>> cost(unbound.size(), std::vector<double>(m_tracks.size(), infeasible));
     for (std::size_t r = 0; r < unbound.size(); ++r) {
         const MotionVector& v = *vectors[unbound[r]];
@@ -147,10 +156,13 @@ std::vector<uint64_t> Tracker::associate(const std::vector<const MotionVector*>&
                 continue;
             }
             double d = 0.0;
+            double along = 0.0;
+            double across = 0.0;
             // euclidean distance between tracks projected in delta time and
             // the incoming object
             // TODO: we can save computation by projecting the tracks only once per time step, not per object
-            if (residual(m_tracks[c], v, d) && d <= m_params.gateDistance) {
+            if (residual(m_tracks[c], v, d, &along, &across)
+                && std::hypot(along / m_params.gateAlong, across / m_params.gateAcross) <= 1.0) {
                 cost[r][c] = d;
             }
         }
@@ -163,7 +175,7 @@ std::vector<uint64_t> Tracker::associate(const std::vector<const MotionVector*>&
     HungarianAlgorithm().Solve(cost, assignment);
     for (std::size_t r = 0; r < unbound.size(); ++r) {
         const int c = assignment[r];
-        if (c >= 0 && cost[r][c] <= m_params.gateDistance) {
+        if (c >= 0 && cost[r][c] < infeasible) {
             trackOf[unbound[r]] = m_tracks[c].id;
         }
     }

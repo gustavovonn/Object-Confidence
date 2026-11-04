@@ -89,9 +89,9 @@ ConsistencyResult ObjectConfidenceEngine::consistencyCheck(const MotionVector& v
     return ::consistencyCheck<CartesianCoordinatePolicy>(b->last, current, m_consistency);
 }
 
-bool ObjectConfidenceEngine::gateCheck(double residual) const
+bool ObjectConfidenceEngine::predictiveCheck(double residual) const
 {
-    return residual <= m_params.gateDistance;
+    return residual <= m_params.maxPosDev;
 }
 
 /**
@@ -110,7 +110,8 @@ void ObjectConfidenceEngine::process(const MotionVector& v, uint64_t trackId, Ve
         if (projected) {
             const ConsistencyResult consistency = consistencyCheck(v);
             r.consistencyFailed = consistency.failed;
-            passed = gateCheck(residual) && !consistency.failed;
+
+            passed = predictiveCheck(residual) && !consistency.failed;
         }
     }
 

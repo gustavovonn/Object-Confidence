@@ -36,8 +36,10 @@ public:
     // Track moved to time t; the track itself is not modified
     void project(const ObjectTrack& track, double t, UKF& out) const;
 
-    // Track projected to v's time and v's position residual to it [m]; false when not finite
-    bool residual(const ObjectTrack& track, const MotionVector& v, double& residual) const;
+    // Track projected to v's time and v's position residual to it [m], optionally split along and
+    // across the projected yaw; false when not finite
+    bool residual(const ObjectTrack& track, const MotionVector& v, double& residual, double* along = nullptr,
+                  double* across = nullptr) const;
 
     // Track id per vector of one message, 0 when none
     std::vector<uint64_t> associate(const std::vector<const MotionVector*>& vectors);

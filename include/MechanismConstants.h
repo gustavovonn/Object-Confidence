@@ -7,9 +7,12 @@
 
 namespace ConstantsAssociation {
 
-// Association and fusion gate on the position residual [m]: static d_max_0 of paper 1,
-// calibrated on the fault-free VeReMi Extension subset (Sec. V-A)
-constexpr double DEFAULT_GATE_DISTANCE = 4.3506;
+// Association gate along the projected track heading, semi-axis [m]
+constexpr double DEFAULT_GATE_ALONG = 4.3506;
+
+// Association gate across the projected track heading, semi-axis [m]: half the 3.2 m SUMO default
+// lane width, so vehicles side by side in adjacent lanes are not associated
+constexpr double DEFAULT_GATE_ACROSS = 1.6;
 
 // Track retired after this long without a fused report [s]
 constexpr double DEFAULT_RETIRE_AFTER = 1.5;
@@ -20,6 +23,14 @@ constexpr double DEFAULT_RETIRE_AFTER = 1.5;
 constexpr double DEFAULT_SOURCE_ACTIVE_WINDOW = 1.0;
 
 }  // namespace ConstantsAssociation
+
+namespace ConstantsPredictive {
+
+// Predictive check: largest position residual to the track projected to the report time [m],
+// static d_max_0 of paper 1
+constexpr double DEFAULT_MAX_POS_DEV = 4.3506;
+
+}  // namespace ConstantsPredictive
 
 namespace ConstantsConsistency {
 

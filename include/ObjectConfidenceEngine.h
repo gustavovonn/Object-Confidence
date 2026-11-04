@@ -17,8 +17,8 @@
 //   1 plausibilityCheck   finite values
 //   2 associate           per message: bound source keeps its track; unbound sources jointly,
 //                         one per track, inside the gate (Hungarian)
-//   3 checks              per vector with a track: track projected to the vector time; consistency against the
-//                         source's last report; position gate
+//   3 checks              per vector with a track: consistency against the source's last report; predictive
+//                         check, the position residual to the track projected to the vector time
 //   4 kalmanUpdate        only vectors that passed the checks
 //   5 score               hit or miss on the track
 class ObjectConfidenceEngine
@@ -31,7 +31,7 @@ public:
 
     bool plausibilityCheck(const MotionVector& v) const;
     ConsistencyResult consistencyCheck(const MotionVector& v) const;
-    bool gateCheck(double residual) const;
+    bool predictiveCheck(double residual) const;
 
     const Tracker& tracker() const { return m_tracker; }
     const Scorer& scorer() const { return m_scorer; }

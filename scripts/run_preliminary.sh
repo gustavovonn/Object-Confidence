@@ -11,6 +11,16 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# always rebuilt
+cmake -S . -B build >/dev/null
+cmake --build build --target replay -j"$(nproc)"
+
+PYTHON=.venv/bin/python   # detect_eval.py needs matplotlib (requirements.txt)
+if [ ! -x "$PYTHON" ]; then
+    python3 -m venv .venv
+    .venv/bin/pip install -r requirements.txt
+fi
+
 GENERATOR=$(realpath "${GENERATOR:-libs/Artery-Dataset-Generator}")
 CONFIG=${CONFIG:-lust-full}  # generator omnetpp.ini config
 RUN=${RUN:-0}                # its run number (seed)
@@ -24,8 +34,6 @@ if [ ! -d "$GT" ]; then
     "$GENERATOR/scripts/build.sh"
     "$GENERATOR/scripts/run.sh" -c "$CONFIG" -r "$RUN"
 fi
-PYTHON=.venv/bin/python   # detect_eval.py needs matplotlib (requirements.txt)
-[ -x "$PYTHON" ] || { echo "missing $PYTHON: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt" >&2; exit 1; }
 TYPES=(Honest ConstPos ConstPosOffset RandomPos RandomPosOffset ConstSpeed ConstSpeedOffset RandomSpeed RandomSpeedOffset)
 
 for type in "${TYPES[@]}"; do

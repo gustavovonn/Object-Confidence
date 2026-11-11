@@ -86,7 +86,11 @@ ConsistencyResult ObjectConfidenceEngine::consistencyCheck(const MotionVector& v
     current.lat = v.y;
     current.speed = v.speed;
     current.time = v.t;
-    return ::consistencyCheck<CartesianCoordinatePolicy>(b->last, current, m_consistency);
+    ConsistencyThresholds th = m_consistency;
+    if (m_params.frozenScale > 0.0) {
+        th.frozenDisplacement = m_params.frozenScale * 0.5 * (b->last.speed + current.speed) * (current.time - b->last.time);
+    }
+    return ::consistencyCheck<CartesianCoordinatePolicy>(b->last, current, th);
 }
 
 bool ObjectConfidenceEngine::predictiveCheck(double residual) const

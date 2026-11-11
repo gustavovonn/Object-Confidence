@@ -1,11 +1,12 @@
 // Replays flattened receptions (scripts/flatten_dataset.py) through one engine per receiver.
 // Usage: replay <receptions.csv> <records.csv> [--profile] [--max-msgs N] [--csv-out <file>] [--dataset <name>]
-//               [--retire-after S]
+//               [--retire-after S] [--frozen-scale K]
 //   --profile       per-stage latency report
 //   --max-msgs      stop after N messages
 //   --csv-out       append the per-stage latency rows to <file> (header when new); implies --profile
 //   --dataset       name in those rows; default: receptions file name without extension
 //   --retire-after  track retirement [s]; default EngineParams::retireAfter
+//   --frozen-scale  frozen position below K * v_avg * dt; default EngineParams::frozenScale (fixed bound)
 
 #include "MessageAdapter.h"
 #include "ObjectConfidenceEngine.h"
@@ -103,7 +104,7 @@ int usage(const char* program)
 {
     std::fprintf(stderr,
                  "usage: %s <receptions.csv> <records.csv> [--profile] [--max-msgs N] [--csv-out <file>] "
-                 "[--dataset <name>] [--retire-after S]\n",
+                 "[--dataset <name>] [--retire-after S] [--frozen-scale K]\n",
                  program);
     return EXIT_FAILURE;
 }
@@ -133,6 +134,8 @@ int main(int argc, char** argv)
             dataset = argv[++i];
         } else if (arg == "--retire-after" && i + 1 < argc) {
             params.retireAfter = std::strtod(argv[++i], nullptr);
+        } else if (arg == "--frozen-scale" && i + 1 < argc) {
+            params.frozenScale = std::strtod(argv[++i], nullptr);
         } else {
             return usage(argv[0]);
         }

@@ -32,6 +32,10 @@ public:
   // Process noise standard deviation yaw acceleration in rad/s^2
   double std_yawdd_;
 
+  // CTRA: process noise standard deviation longitudinal jerk in m/s^3
+  // (replaces std_a_, as the acceleration is now part of the state)
+  double std_jerk_ = 0.6;
+
   double std_spd_;
 
   double std_yaw_;

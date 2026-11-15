@@ -55,10 +55,10 @@ UKF::UKF() {
   std_radrd_ = 0.3;  // fixed value given by the manufacturer
 
   // State dimension: [pos1 pos2 vel_abs yaw_angle yaw_rate]
-  n_x_ = 5;
+  n_x_ = 6;  // CTRA: [px, py, v, yaw, yaw rate, a]
 
   // Augmented state dimension
-  n_aug_ = 7;
+  n_aug_ = 8;  // CTRA: state + jerk and yaw acceleration noise
 
   // Number of sigma points
   n_aug_sigma_ = 2 * n_aug_ + 1;
@@ -250,10 +250,10 @@ void UKF::Initialization(MeasurementPackage meas_package){
     double px = cos(phi) * rho;
     double py = sin(phi) * rho;
 
-    x_ << px, py, 0, 0, 0;
+    x_ << px, py, 0, 0, 0, 0;
   }
   else if  (meas_package.sensor_type_ == MeasurementPackage::LASER){
-    x_ << meas_package.raw_measurements_[0], meas_package.raw_measurements_[1], meas_package.raw_measurements_[2], meas_package.raw_measurements_[3], 0;
+    x_ << meas_package.raw_measurements_[0], meas_package.raw_measurements_[1], meas_package.raw_measurements_[2], meas_package.raw_measurements_[3], 0, 0;
   }
   else{
     return;  // if no valid measurement arrived, then wait for the next measurement
@@ -269,11 +269,7 @@ void UKF::Initialization(MeasurementPackage meas_package){
   /**
    * Initialize the covariance matrix
    */
-  P_ << 1, 0, 0, 0, 0,
-        0, 1, 0, 0, 0,
-        0, 0, 1, 0, 0,
-        0, 0, 0, 1, 0,
-        0, 0, 0, 0, 1;
+  P_ = MatrixXd::Identity(n_x_, n_x_);
 
   // set Initialize flag to true
   is_initialized_ = true;
@@ -528,7 +524,7 @@ void UKF::AugmentSigmaPoints(){
   MatrixXd P_aug_ = MatrixXd(n_aug_, n_aug_);
   P_aug_.fill(0.0);
   P_aug_.topLeftCorner( n_x_, n_x_ ) = P_;
-  P_aug_(n_aug_-2, n_aug_-2) = std_a_ * std_a_;
+  P_aug_(n_aug_-2, n_aug_-2) = std_jerk_ * std_jerk_;
   P_aug_(n_aug_-1, n_aug_-1) = std_yawdd_ * std_yawdd_;
 
 #if DEBUG
@@ -563,32 +559,40 @@ void UKF::PredictSigmaPoints(double delta_t){
     double v = Xsig_aug_(2,i);
     double yaw = Xsig_aug_(3,i);
     double yawd = Xsig_aug_(4,i);
-    double nu_a = Xsig_aug_(5,i);
-    double nu_yawdd = Xsig_aug_(6,i);
+    double a = Xsig_aug_(5,i);
+    double nu_j = Xsig_aug_(6,i);
+    double nu_yawdd = Xsig_aug_(7,i);
 
-    //predicted state values
+    const double dt2 = delta_t*delta_t;
+    const double v_end = v + a*delta_t;
+    const double yaw_end = yaw + yawd*delta_t;
+
+    //predicted position: closed-form CTRA (yaw counter-clockwise from east)
     double px_p, py_p;
 
-    //avoid division by zero
+    //avoid division by zero: constant acceleration along the yaw
     if (fabs(yawd) > 0.001) {
-      px_p = p_x + v/yawd * ( sin (yaw + yawd*delta_t) - sin(yaw));
-      py_p = p_y + v/yawd * ( cos(yaw) - cos(yaw+yawd*delta_t) );
+      const double w2 = yawd*yawd;
+      px_p = p_x + (v_end*yawd*sin(yaw_end) + a*cos(yaw_end) - v*yawd*sin(yaw) - a*cos(yaw)) / w2;
+      py_p = p_y + (-v_end*yawd*cos(yaw_end) + a*sin(yaw_end) + v*yawd*cos(yaw) - a*sin(yaw)) / w2;
     }
     else {
-      px_p = p_x + v*delta_t*cos(yaw);
-      py_p = p_y + v*delta_t*sin(yaw);
+      px_p = p_x + (v*delta_t + 0.5*a*dt2) * cos(yaw);
+      py_p = p_y + (v*delta_t + 0.5*a*dt2) * sin(yaw);
     }
 
-    double v_p = v;
-    double yaw_p = yaw + yawd*delta_t;
+    double v_p = v_end;
+    double yaw_p = yaw_end;
     double yawd_p = yawd;
+    double a_p = a;
 
-    //add noise
-    px_p = px_p + 0.5*nu_a*delta_t*delta_t * cos(yaw);
-    py_p = py_p + 0.5*nu_a*delta_t*delta_t * sin(yaw);
-    v_p = v_p + nu_a*delta_t;
+    //add noise: jerk on the longitudinal chain, yaw acceleration on the angular one
+    px_p = px_p + nu_j*dt2*delta_t/6.0 * cos(yaw);
+    py_p = py_p + nu_j*dt2*delta_t/6.0 * sin(yaw);
+    v_p = v_p + 0.5*nu_j*dt2;
+    a_p = a_p + nu_j*delta_t;
 
-    yaw_p = yaw_p + 0.5*nu_yawdd*delta_t*delta_t;
+    yaw_p = yaw_p + 0.5*nu_yawdd*dt2;
     yawd_p = yawd_p + nu_yawdd*delta_t;
 
     //write predicted sigma point into right column
@@ -597,6 +601,7 @@ void UKF::PredictSigmaPoints(double delta_t){
     Xsig_pred_(2,i) = v_p;
     Xsig_pred_(3,i) = yaw_p;
     Xsig_pred_(4,i) = yawd_p;
+    Xsig_pred_(5,i) = a_p;
   }
 }
 

@@ -17,6 +17,8 @@ struct EngineParams {
     // consistency check between consecutive reports of one source
     double speedToleranceMps = ConstantsConsistency::DEFAULT_SPEED_TOLERANCE_MPS;
     bool enableConsistency = true;
+    // frozen-position bound scaled to K * v_avg * dt; <= 0: the fixed FROZEN_DISPLACEMENT_MIN
+    double frozenScale = 0.0;
 
     // confidence
     double forgetting = ConstantsScore::DEFAULT_FORGETTING;

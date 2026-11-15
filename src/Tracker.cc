@@ -68,7 +68,8 @@ void Tracker::project(const ObjectTrack& track, double t, UKF& out) const
     const double dt = std::max(0.0, t - track.t);
     // plain copy: UKF_copy() leaves std_laspx_ uninitialised
     out = track.filter;
-    out.Prediction(dt);
+    // same stepping as the fusion in ProcessMeasurement
+    out.Predict(dt);
 }
 
 bool Tracker::residual(const ObjectTrack& track, const MotionVector& v, double& residual, double* along,
@@ -205,8 +206,13 @@ ObjectTrack& Tracker::initiateTrack(const MotionVector& v)
     track.id = m_nextId++;  // local ids!
     track.t = v.t;
 
+    track.filter.std_jerk_ = m_params.stdJerk;
+    track.filter.std_yawdd_ = m_params.stdYawAccel;
+
     // the UKF initialises from its first measurement
     MeasurementPackage first = laserOf(v, microseconds(v.t));
+    const std::array<double, 6>& p0 = v.hasVelocity ? m_params.p0 : m_params.p0NoVelocity;
+    track.filter.P0_diag_ = Eigen::Map<const Eigen::VectorXd>(p0.data(), 6);
     if (!v.hasVelocity) {
         // at rest, as the UKF's own RADAR initialisation
         first.raw_measurements_(2) = 0.0;

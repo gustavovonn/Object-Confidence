@@ -43,6 +43,29 @@ constexpr double FROZEN_DISPLACEMENT_MIN = 0.3;      // [m] paper 1
 
 }  // namespace ConstantsConsistency
 
+namespace ConstantsUkf {
+
+// Calibrated on simulator ground truth
+
+// CTRA process noise: standard deviations of the noise drawn at every UKF Prediction() call, which
+// UKF::Predict makes at most 0.1 s long (0.05 s pieces, then the remainder); valid for that scheme only.
+// Maximum likelihood on the error of v and yaw predicted from exact truth states, over the intervals
+// between reports of a station (0.1-1 s)
+constexpr double DEFAULT_STD_JERK = 10.2;      // longitudinal jerk [m/s^3]
+constexpr double DEFAULT_STD_YAW_ACCEL = 2.7;  // yaw acceleration [rad/s^2]
+
+// Initial state covariance, diagonal over [px, py, v, yaw, yaw rate, a]
+// [m^2, m^2, (m/s)^2, rad^2, (rad/s)^2, (m/s^2)^2]: the measured states start from the first vector, so
+// the squares of the UKF laser noise (0.15 m, 0.15 m, 0.29 m/s, 0.12 rad); yaw rate and a start at 0, so
+// their truth second moments at report times
+constexpr double DEFAULT_P0[6] = {0.0225, 0.0225, 0.0841, 0.0144, 0.0526, 3.42};
+
+// same, for a first vector without velocity: v and yaw start at 0, so the truth second moment of v and
+// the variance of a uniform yaw, pi^2 / 3
+constexpr double DEFAULT_P0_NO_VELOCITY[6] = {0.0225, 0.0225, 329.0, 3.29, 0.0526, 3.42};
+
+}  // namespace ConstantsUkf
+
 namespace ConstantsScore {
 
 // Beta reputation with forgetting (Josang & Ismail, Bled 2002, Sec. 2.6); lambda = 0.9 as paper 1

@@ -23,6 +23,20 @@ The default ground truth is `libs/Artery-Dataset-Generator/data/groundtruth/lust
 (complete LuST, 40 s from 07:00: `scripts/run.sh -c lust-full` there); generating it needs that
 submodule's own submodules and its README.
 
+## UKF calibration
+
+The track UKF's process noise and initial covariance (`ConstantsUkf` in `include/MechanismConstants.h`)
+are calibrated on the simulator ground truth, not on receptions, where process and measurement noise
+cannot be told apart:
+
+```sh
+python3 scripts/flatten_truth.py libs/Artery-Dataset-Generator/data/groundtruth/lust-full-run0 results/calibration/lust-full-run0
+build/calibrate_ukf results/calibration/lust-full-run0 results/calibration/lust-full-run0/ukf_calibration.md
+```
+
+`ukf_calibration.md` holds the fitted σ (per Δ and per channel), P0, and the NEES on held-out stations
+before and after. `replay --std-jerk J --std-yawdd Y --p0-scale K` overrides the values for ablations.
+
 ## Latency benchmark on the VisionFive 2
 
 `replay --profile` reports the latency of each `ObjectConfidenceEngine` stage (mean, p50, p99,

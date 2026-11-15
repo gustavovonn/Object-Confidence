@@ -1,12 +1,15 @@
 // Replays flattened receptions (scripts/flatten_dataset.py) through one engine per receiver.
 // Usage: replay <receptions.csv> <records.csv> [--profile] [--max-msgs N] [--csv-out <file>] [--dataset <name>]
-//               [--retire-after S] [--frozen-scale K]
+//               [--retire-after S] [--frozen-scale K] [--std-jerk J] [--std-yawdd Y] [--p0-scale K]
 //   --profile       per-stage latency report
 //   --max-msgs      stop after N messages
 //   --csv-out       append the per-stage latency rows to <file> (header when new); implies --profile
 //   --dataset       name in those rows; default: receptions file name without extension
 //   --retire-after  track retirement [s]; default EngineParams::retireAfter
 //   --frozen-scale  frozen position below K * v_avg * dt; default EngineParams::frozenScale (fixed bound)
+//   --std-jerk      UKF process noise, jerk [m/s^3]; default EngineParams::stdJerk
+//   --std-yawdd     UKF process noise, yaw acceleration [rad/s^2]; default EngineParams::stdYawAccel
+//   --p0-scale      multiplies both initial covariances, EngineParams::p0 and p0NoVelocity; default 1
 
 #include "MessageAdapter.h"
 #include "ObjectConfidenceEngine.h"
@@ -104,7 +107,8 @@ int usage(const char* program)
 {
     std::fprintf(stderr,
                  "usage: %s <receptions.csv> <records.csv> [--profile] [--max-msgs N] [--csv-out <file>] "
-                 "[--dataset <name>] [--retire-after S] [--frozen-scale K]\n",
+                 "[--dataset <name>] [--retire-after S] [--frozen-scale K] [--std-jerk J] [--std-yawdd Y] "
+                 "[--p0-scale K]\n",
                  program);
     return EXIT_FAILURE;
 }
@@ -136,6 +140,16 @@ int main(int argc, char** argv)
             params.retireAfter = std::strtod(argv[++i], nullptr);
         } else if (arg == "--frozen-scale" && i + 1 < argc) {
             params.frozenScale = std::strtod(argv[++i], nullptr);
+        } else if (arg == "--std-jerk" && i + 1 < argc) {
+            params.stdJerk = std::strtod(argv[++i], nullptr);
+        } else if (arg == "--std-yawdd" && i + 1 < argc) {
+            params.stdYawAccel = std::strtod(argv[++i], nullptr);
+        } else if (arg == "--p0-scale" && i + 1 < argc) {
+            const double k = std::strtod(argv[++i], nullptr);
+            for (std::size_t j = 0; j < params.p0.size(); ++j) {
+                params.p0[j] *= k;
+                params.p0NoVelocity[j] *= k;
+            }
         } else {
             return usage(argv[0]);
         }

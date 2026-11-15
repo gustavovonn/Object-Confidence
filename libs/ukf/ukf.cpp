@@ -85,6 +85,9 @@ UKF::UKF() {
   // state covariance matrix
   P_ = MatrixXd(n_x_, n_x_);
 
+  // initial state covariance
+  P0_diag_ = VectorXd::Ones(n_x_);
+
   // predicted sigma points matrix
   Xsig_pred_ = MatrixXd(n_x_, n_aug_sigma_);
 
@@ -168,6 +171,9 @@ UKF::UKF(bool is_initialized_, bool use_laser_, bool use_radar_, long long time_
   // agumented sigma points matrix
   this->Xsig_aug_ = Xsig_aug_;
 
+  // initial state covariance
+  this->P0_diag_ = VectorXd::Ones(n_x_);
+
 }
 
 // Return a deep copy of the object
@@ -204,15 +210,7 @@ void UKF::ProcessMeasurement(MeasurementPackage meas_package) {
   std::cout << "P= \n" << P_ << std::endl;
 #endif
 
-  // when we apply Euler method for large steps, we are assuming that the derivative of the states is constant over
-  // that whole interval, this leads to error in state propagation, so we divide the one big step to several small ones.
-  // *See detail discussion* @ https://discussions.udacity.com/t/numerical-instability-of-the-implementation/230449/55
-  while (delta_t > 0.1){
-    const double dt = 0.05;
-    Prediction(dt);
-    delta_t -= dt;
-  }
-  Prediction(delta_t);
+  Predict(delta_t);
 
 
 #if DEBUG
@@ -269,12 +267,28 @@ void UKF::Initialization(MeasurementPackage meas_package){
   /**
    * Initialize the covariance matrix
    */
-  P_ = MatrixXd::Identity(n_x_, n_x_);
+  P_ = P0_diag_.asDiagonal();
 
   // set Initialize flag to true
   is_initialized_ = true;
 }
 
+
+/**
+ * Predicts over delta_t in steps of at most 0.1 s
+ * @param {double} delta_t the change in time (in seconds)
+ */
+void UKF::Predict(double delta_t) {
+  // when we apply Euler method for large steps, we are assuming that the derivative of the states is constant over
+  // that whole interval, this leads to error in state propagation, so we divide the one big step to several small ones.
+  // *See detail discussion* @ https://discussions.udacity.com/t/numerical-instability-of-the-implementation/230449/55
+  while (delta_t > 0.1){
+    const double dt = 0.05;
+    Prediction(dt);
+    delta_t -= dt;
+  }
+  Prediction(delta_t);
+}
 
 /**
  * Predicts sigma points, the state, and the state covariance matrix.

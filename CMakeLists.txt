@@ -34,3 +34,8 @@ target_link_libraries(object_confidence PUBLIC ukf PRIVATE hungarian)
 
 add_executable(replay tools/replay.cc)
 target_link_libraries(replay PRIVATE object_confidence)
+
+# UKF process noise and initial covariance on ground truth (scripts/flatten_truth.py)
+add_executable(calibrate_ukf tools/calibrate_ukf.cc)
+target_link_libraries(calibrate_ukf PRIVATE object_confidence)
+target_compile_options(calibrate_ukf PRIVATE -Wall -Wextra)

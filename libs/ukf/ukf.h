@@ -82,6 +82,9 @@ public:
   // state covariance matrix
   MatrixXd P_;
 
+  // initial state covariance (diagonal, n_x_ entries) set by Initialization; identity by default
+  VectorXd P0_diag_;
+
   // predicted sigma points matrix
   MatrixXd Xsig_pred_;
 
@@ -116,6 +119,14 @@ public:
    * @param delta_t Time between k and k+1 in s
    */
   void Prediction(double delta_t);
+
+  /**
+   * Predict Predicts over delta_t in steps of at most 0.1 s (0.05 s pieces, then the remainder),
+   * the only prediction path: ProcessMeasurement and the projection of a track both use it, so the
+   * accumulated process noise (sigma^2 * sum dt_i^2) is the same for a given delta_t
+   * @param delta_t Time between k and k+1 in s
+   */
+  void Predict(double delta_t);
 
   /**
    * Updates the state and the state covariance matrix using a laser measurement

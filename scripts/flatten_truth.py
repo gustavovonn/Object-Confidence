@@ -14,11 +14,15 @@ import json
 import sys
 from pathlib import Path
 
+from common import calibration_dir
+
 POSE = ["station", "time", "lat", "lon", "heading", "speed", "accel", "yawRate"]
 
 
 def main():
-    run, out = Path(sys.argv[1]), Path(sys.argv[2])
+    if len(sys.argv) != 3:
+        sys.exit(__doc__)
+    run, out = calibration_dir(sys.argv[1:2]), Path(sys.argv[2])  # the UKF is calibrated on the validation window
     out.mkdir(parents=True, exist_ok=True)
 
     length = {}

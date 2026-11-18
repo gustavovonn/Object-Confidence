@@ -2,7 +2,7 @@
 """Association quality per fault subset, against the station each vector really describes.
 
 Usage: association_eval.py <results dir>
-Reads <dir>/<fault type>/records.csv (scripts/run_preliminary.sh) and writes <dir>/association.md.
+Reads <dir>/<fault type>/records.csv (scripts/veremi_eval.py) and writes <dir>/association.md.
 
 Ground truth: `trueStation`, the station that sent the CAM or that the CPM object is (oracle);
 vectors without one (-1) and dropped vectors are left out of the metrics. Tracks are receiver-local.
@@ -19,26 +19,20 @@ station is in a track from each of its vectors there until RETIRE_AFTER after th
 the track retires. Fused vectors without velocity, which the engine does not fuse, are not told apart.
 
 The fault-free baseline (Honest) comes first and stays out of the total, which sums the fault subsets.
+Subsets without records.csv are left out (a partial run).
 """
-import csv
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
-BASELINE = "Honest"
-TYPES = ["ConstPos", "ConstPosOffset", "RandomPos", "RandomPosOffset",
-         "ConstSpeed", "ConstSpeedOffset", "RandomSpeed", "RandomSpeedOffset"]
-
-# include/MechanismConstants.h, ConstantsAssociation::DEFAULT_RETIRE_AFTER [s]
-RETIRE_AFTER = 1.5
+from common import RETIRE_AFTER, SUBSETS, Rows, records_path
 
 K_COLUMNS = (1, 2, 3, 4)  # last column: k >= 4
 
 
 def load(path):
     """Vectors that reached a track, in processing order."""
-    with open(path) as f:
-        return [r for r in csv.DictReader(f) if r["outcome"] != "dropped" and r["trackId"] != "0"]
+    return Rows(path, lambda r: r["outcome"] != "dropped" and r["trackId"] != "0")
 
 
 def simultaneous(rows):
@@ -108,11 +102,13 @@ def pct(a, b):
     return 100.0 * a / b if b else 0.0
 
 
-def row(name, s):
-    return "| {} | {} | {} | {:.2f} | {} | {:.2f} | {:.2f} | {:.2f} | {:.2f} |".format(
-        name, s["vectors"], s["tracks"], pct(s["majority"], s["vectors"]), s["mixed"],
-        s["kSum"] / s["objects"] if s["objects"] else 0.0, 100.0 - pct(s["k1"], s["objects"]),
-        pct(s["camRejected"], s["camSeen"]), pct(s["cpmRejected"], s["cpmSeen"]))
+def row(name, s, vectors=True):
+    """Table row of stats s; without the vector count when vectors is False."""
+    cells = [name] + ([str(s["vectors"])] if vectors else []) + [
+        str(s["tracks"]), f"{pct(s['majority'], s['vectors']):.2f}", str(s["mixed"]),
+        f"{s['kSum'] / s['objects'] if s['objects'] else 0.0:.2f}", f"{100.0 - pct(s['k1'], s['objects']):.2f}",
+        f"{pct(s['camRejected'], s['camSeen']):.2f}", f"{pct(s['cpmRejected'], s['cpmSeen']):.2f}"]
+    return "| " + " | ".join(cells) + " |"
 
 
 def kRow(name, s):
@@ -128,14 +124,15 @@ def table(root):
               + f" | k >= {K_COLUMNS[-1]} |",
               "|---|---|" + "---|" * len(K_COLUMNS)]
     total = Counter()
-    for kind in [BASELINE] + TYPES:
+    for kind in [k for k in SUBSETS if records_path(root / k / "records.csv")]:
         s = stats(load(root / kind / "records.csv"))
-        if kind != BASELINE:
+        if kind != SUBSETS[0]:
             total.update(s)
         lines.append(row(kind, s))
         kLines.append(kRow(kind, s))
-    lines.append(row("**all**", total))
-    kLines.append(kRow("**all**", total))
+    if total:  # no fault subset (a fault-free run alone): no total
+        lines.append(row("**all**", total))
+        kLines.append(kRow("**all**", total))
     return "\n".join(lines) + "\n\nk: most tracks one (receiver, station) is in at the same time\n\n" \
         + "\n".join(kLines) + "\n"
 

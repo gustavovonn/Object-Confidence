@@ -107,8 +107,9 @@ if [ -n "$DATA_DIR" ] || [ -d "$SCRIPT_DIR/data" ]; then
         [ -f "$f" ] && DATASETS="$DATASETS $f"
     done
 else
-    for d in $(ls -td "$REPO_ROOT"/results/*/ 2>/dev/null); do
-        for f in "$d"*/receptions.csv; do
+    # host: the newest receptions kept by KEEP_RECEPTIONS=1 scripts/veremi_eval.py
+    for d in $(ls -td "$REPO_ROOT"/results/veremi-eval-*/receptions/ 2>/dev/null); do
+        for f in "$d"*.csv; do
             [ -f "$f" ] && DATASETS="$DATASETS $f"
         done
         [ -n "$DATASETS" ] && break
@@ -136,7 +137,7 @@ fi
 
 if [ -z "$DATASETS" ]; then
     echo "[!] Error: no receptions found."
-    echo "    Specify via --dir <path> or generate them with KEEP_RECEPTIONS=1 scripts/run_preliminary.sh"
+    echo "    Specify via --dir <path> or generate them with KEEP_RECEPTIONS=1 python3 scripts/veremi_eval.py"
     exit 1
 fi
 

@@ -4,8 +4,8 @@
 #include <cstdint>
 #include <unordered_map>
 
-// Per-track confidence: Beta reputation with forgetting (Josang & Ismail, Bled 2002, Eq. 5 and 12).
-// A fused report is a hit, a rejected one a miss (Hallyburton & Pajic, CDC 2024, Eq. 5).
+// Confidence per key (a track, or an author): Beta reputation with forgetting
+// A fused report is a hit, a rejected one a miss
 class Scorer
 {
 public:
@@ -15,7 +15,7 @@ public:
     double miss(uint64_t trackId) { return add(trackId, 0.0, 1.0); }
 
     // Expectation of Beta(r + 1, s + 1); 0.5 without evidence
-    double confidenceOf(uint64_t trackId) const
+    double getConfidence(uint64_t trackId) const
     {
         auto it = m_evidence.find(trackId);
         return it != m_evidence.end() ? expectation(it->second) : 0.5;

@@ -2,7 +2,6 @@
 #define TRACKER_H_
 
 #include "EngineParams.h"
-#include "MotionTypes.h"
 #include "MotionVector.h"
 #include "ObjectTrack.h"
 
@@ -21,19 +20,13 @@ struct SourceKey {
     }
 };
 
-// Track a source is associated with, and its last report (consistency check input)
-struct SourceBinding {
-    uint64_t trackId = 0;
-    KinematicState last;  // Cartesian policy: lon = x, lat = y
-};
-
 // Owns the tracks and the source -> track association.
 class Tracker
 {
 public:
     explicit Tracker(const EngineParams& params);
 
-    // Track moved to time t; the track itself is not modified
+    // Track moved to time t, also back to a time before its state; the track itself is not modified
     void project(const ObjectTrack& track, double t, UKF& out) const;
 
     // Track projected to v's time and v's position residual to it [m], optionally split along and
@@ -42,23 +35,23 @@ public:
                   double* across = nullptr) const;
 
     // Track id per vector of one message, 0 when none
-    std::vector<uint64_t> associate(const std::vector<const MotionVector*>& vectors);
-    ObjectTrack* find(uint64_t id);
+    std::vector<TrackId> associate(const std::vector<const MotionVector*>& vectors);
+    ObjectTrack* getObjectTrack(TrackId id);
     void kalmanUpdate(ObjectTrack& track, const MotionVector& v);
     ObjectTrack& initiateTrack(const MotionVector& v);
-    std::vector<uint64_t> retireStaleTracks(double now);
+    std::vector<TrackId> retireStaleTracks(double now);
 
-    const SourceBinding* binding(const MotionVector& v) const;
-    void bind(const MotionVector& v, uint64_t trackId);
-    void recordReport(const MotionVector& v);
+    TrackId getTrackId(const MotionVector& v) const;
+    void setBind(const MotionVector& v, TrackId trackId);
 
     const std::vector<ObjectTrack>& tracks() const { return m_tracks; }
 
 private:
-    EngineParams m_params;
     std::vector<ObjectTrack> m_tracks;
-    std::map<SourceKey, SourceBinding> m_bindings;
-    uint64_t m_nextId = 1;
+    std::map<SourceKey, TrackId> m_bindings;  // source -> the track it is associated with
+
+    EngineParams m_params;
+    TrackId m_nextId = 1;
 };
 
 #endif  // TRACKER_H_

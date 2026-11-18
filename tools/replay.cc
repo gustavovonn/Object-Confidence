@@ -1,15 +1,25 @@
 // Replays flattened receptions (scripts/flatten_dataset.py) through one engine per receiver.
 // Usage: replay <receptions.csv> <records.csv> [--profile] [--max-msgs N] [--csv-out <file>] [--dataset <name>]
-//               [--retire-after S] [--frozen-scale K] [--std-jerk J] [--std-yawdd Y] [--p0-scale K]
+//               [--retire-after S] [--frozen-scale K] [--max-pos-dev D] [--no-kalman] [--no-consistency]
+//               [--no-predictive] [--no-frozen] [--meas-noise S] [--confidence M] [--state]
+//               [--std-jerk J] [--std-yawdd Y] [--p0-scale K]
 //   --profile       per-stage latency report
 //   --max-msgs      stop after N messages
 //   --csv-out       append the per-stage latency rows to <file> (header when new); implies --profile
 //   --dataset       name in those rows; default: receptions file name without extension
 //   --retire-after  track retirement [s]; default EngineParams::retireAfter
-//   --frozen-scale  frozen position below K * v_avg * dt; default EngineParams::frozenScale (fixed bound)
+//   --max-pos-dev   predictive check bound [m]; default EngineParams::maxPosDev (scripts/calib_maxposdev.py)
+//   --frozen-scale  frozen position below K * v_avg * dt; default EngineParams::frozenScale
+//   --no-<component>  turns one component off (EngineParams::enable*), for ablations (kalman_eval.py: --no-kalman)
+//   --meas-noise S  white part of the position error in the receptions, sigma per axis [m] (injected by
+//                   scripts/add_noise.py, or the VeReMi sensor-error jitter): the UKF's position R becomes
+//                   sqrt(S^2 + POS_NOISE_FLOOR^2); default: the UKF's own value
+//   --confidence M  object (default), author or author-kind: the vector's confidence is its track's, or the lower
+//                   of its track's and its author's (author-kind: per CAM and CPM objects); EngineParams::confidence
 //   --std-jerk      UKF process noise, jerk [m/s^3]; default EngineParams::stdJerk
 //   --std-yawdd     UKF process noise, yaw acceleration [rad/s^2]; default EngineParams::stdYawAccel
 //   --p0-scale      multiplies both initial covariances, EngineParams::p0 and p0NoVelocity; default 1
+//   --state         also the track state per vector (measurement, prediction, state after it, NIS), for diagnosis
 
 #include "MessageAdapter.h"
 #include "ObjectConfidenceEngine.h"
@@ -18,6 +28,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <iomanip>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -107,8 +118,9 @@ int usage(const char* program)
 {
     std::fprintf(stderr,
                  "usage: %s <receptions.csv> <records.csv> [--profile] [--max-msgs N] [--csv-out <file>] "
-                 "[--dataset <name>] [--retire-after S] [--frozen-scale K] [--std-jerk J] [--std-yawdd Y] "
-                 "[--p0-scale K]\n",
+                 "[--dataset <name>] [--retire-after S] [--frozen-scale K] [--max-pos-dev D] [--no-kalman] "
+                 "[--no-consistency] [--no-predictive] [--no-frozen] [--meas-noise S] [--confidence M] [--state] "
+                 "[--std-jerk J] [--std-yawdd Y] [--p0-scale K]\n",
                  program);
     return EXIT_FAILURE;
 }
@@ -136,10 +148,33 @@ int main(int argc, char** argv)
             profile = true;
         } else if (arg == "--dataset" && i + 1 < argc) {
             dataset = argv[++i];
+        } else if (arg == "--max-pos-dev" && i + 1 < argc) {
+            params.maxPosDev = std::strtod(argv[++i], nullptr);
         } else if (arg == "--retire-after" && i + 1 < argc) {
             params.retireAfter = std::strtod(argv[++i], nullptr);
         } else if (arg == "--frozen-scale" && i + 1 < argc) {
             params.frozenScale = std::strtod(argv[++i], nullptr);
+        } else if (arg == "--no-kalman") {
+            params.enableKalman = false;
+        } else if (arg == "--no-consistency") {
+            params.enableConsistency = false;
+        } else if (arg == "--no-predictive") {
+            params.enablePredictive = false;
+        } else if (arg == "--no-frozen") {
+            params.enableFrozen = false;
+        } else if (arg == "--meas-noise" && i + 1 < argc) {
+            params.measNoise = std::strtod(argv[++i], nullptr);
+        } else if (arg == "--confidence" && i + 1 < argc) {
+            const std::string mode = argv[++i];
+            if (mode == "object") {
+                params.confidence = ConfidenceMode::Object;
+            } else if (mode == "author") {
+                params.confidence = ConfidenceMode::MinAuthor;
+            } else if (mode == "author-kind") {
+                params.confidence = ConfidenceMode::MinAuthorKind;
+            } else {
+                return usage(argv[0]);
+            }
         } else if (arg == "--std-jerk" && i + 1 < argc) {
             params.stdJerk = std::strtod(argv[++i], nullptr);
         } else if (arg == "--std-yawdd" && i + 1 < argc) {
@@ -150,6 +185,8 @@ int main(int argc, char** argv)
                 params.p0[j] *= k;
                 params.p0NoVelocity[j] *= k;
             }
+        } else if (arg == "--state") {
+            params.recordState = true;
         } else {
             return usage(argv[0]);
         }
@@ -161,7 +198,12 @@ int main(int argc, char** argv)
         std::fprintf(stderr, "cannot open input or output\n");
         return EXIT_FAILURE;
     }
-    out << "receiver,rcvTime,t,author,objectId,origin,trueStation,outcome,trackId,residual,consistencyFailed,confidence,attackType\n";
+    out << "receiver,rcvTime,t,author,objectId,origin,trueStation,outcome,trackId,residual,consistencyFailed,predictiveFailed,confidence,attackType,objectConfidence,authorConfidence";
+    if (params.recordState) {
+        // positions as lat/lon, so the ground truth can be compared without the replay's local plane
+        out << ",measLat,measLon,predLat,predLon,vhat,stateT,stateLat,stateLon,stateV,stateYaw,nis";
+    }
+    out << '\n';
 
     std::string line;
 
@@ -197,8 +239,25 @@ int main(int argc, char** argv)
             // Saves the result for each motion vector. Used in the evaluations
             out << r.receiver << ',' << now << ',' << r.t << ',' << r.author << ',' << r.objectId << ','
                 << (r.origin == Origin::Cam ? "cam" : "cpm") << ',' << r.trueStation << ',' << outcomeName(r.outcome)
-                << ',' << r.trackId << ',' << r.residual << ',' << r.consistencyFailed << ',' << r.confidence << ','
-                << labels[i] << '\n';
+                << ',' << r.trackId << ',' << r.residual << ',' << r.consistencyFailed << ',' << r.predictiveFailed << ',' << r.confidence << ','
+                << labels[i] << ',' << r.objectConfidence << ',' << r.authorConfidence;
+            if (params.recordState) {
+                auto latLon = [&](double x, double y) {
+                    if (!std::isfinite(x)) {
+                        out << ",nan,nan";
+                        return;
+                    }
+                    double lat = 0.0, lon = 0.0;
+                    plane->toGeodetic(x, y, lat, lon);
+                    out << ',' << std::setprecision(10) << lat << ',' << lon << std::setprecision(6);
+                };
+                latLon(message[i].x, message[i].y);
+                latLon(r.predX, r.predY);
+                out << ',' << r.vhat << ',' << std::setprecision(10) << r.stateT << std::setprecision(6);
+                latLon(r.stateX, r.stateY);
+                out << ',' << r.stateV << ',' << r.stateYaw << ',' << r.nis;
+            }
+            out << '\n';
         }
         ++messages;
         vectors += message.size();

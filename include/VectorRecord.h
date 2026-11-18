@@ -3,6 +3,7 @@
 
 #include "MotionVector.h"
 
+#include <cmath>
 #include <cstdint>
 
 enum class Outcome : uint8_t {
@@ -24,8 +25,19 @@ struct VectorRecord {
     Outcome outcome = Outcome::Dropped;
     uint64_t trackId = 0;          // 0 when none
     double residual = -1.0;        // position residual to the projected track [m]
+
     bool consistencyFailed = false;
-    double confidence = -1.0;      // track confidence after this vector
+    bool predictiveFailed = false;  // residual above maxPosDev
+
+    double confidence = -1.0;      // confidence after this vector (EngineParams::confidence): the lower of the two below
+    double objectConfidence = NAN;  // its track's
+    double authorConfidence = NAN;  // its author's (or author and kind); NaN with ConfidenceMode::Object
+
+    // track state, filled only with EngineParams::recordState (diagnosis and calibration); NaN when none
+    double predX = NAN, predY = NAN;  // track projected to t, before this vector [m]
+    double vhat = NAN;                // speed of that projection [m/s]
+    double stateT = NAN, stateX = NAN, stateY = NAN, stateV = NAN, stateYaw = NAN;  // after it; ENU yaw [rad]
+    double nis = NAN;                 // UKF normalized innovation squared of its update (fused, with velocity)
 };
 
 #endif  // VECTOR_RECORD_H_

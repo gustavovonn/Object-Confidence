@@ -22,7 +22,7 @@ CONFIG_DIR="$SCRIPT_DIR/config"                   # prebuilt kernel Image + devi
 BUSYBOX_DIR="$SCRIPT_DIR/busybox"
 INSTALL_DIR="$BUSYBOX_DIR/_install"
 BUILD_RISCV_DIR="$REPO_ROOT/build-riscv"
-RECEPTIONS_DIR=""                                 # results/<name>/<subset>/receptions.csv, KEEP_RECEPTIONS=1 scripts/run_preliminary.sh
+RECEPTIONS_DIR=""                                 # results/veremi-eval-<name>/receptions/<subset>.csv, KEEP_RECEPTIONS=1 scripts/veremi_eval.py
 DATA_ROWS="${DATA_ROWS:-60000}"                   # receptions rows staged per subset, 0: all
 INITRAMFS_CPIO="$SCRIPT_DIR/initramfs.cpio"
 INITRAMFS_GZ="$SCRIPT_DIR/initramfs.cpio.gz"
@@ -94,7 +94,7 @@ while [ $# -gt 0 ]; do
             echo "  --rebuild-busybox    Force recompilation of static BusyBox"
             echo "  --rebuild-project    Force clean cross-compilation of C++ replay"
             echo "  --data-rows <N>      Receptions rows staged per subset, 0 for all (default: $DATA_ROWS)"
-            echo "  --results <dir>      results/<name> of scripts/run_preliminary.sh (default: the newest with receptions)"
+            echo "  --results <dir>      receptions dir of scripts/veremi_eval.py, results/veremi-eval-<name>/receptions (default: the newest)"
             echo "  --skip-tftp          Skip TFTP deployment step entirely"
             echo "  --skip-tftp-network  Deploy TFTP payload without reconfiguring host network"
             echo "  --tftp-dir <path>    Set custom TFTP deploy target (default: $TFTP_DIR)"
@@ -111,10 +111,10 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-# Newest results/<name>/ holding <subset>/receptions.csv
+# Newest results/veremi-eval-<name>/receptions/ holding <subset>.csv (standard condition: VeReMi sensor errors)
 newest_results() {
-    for d in $(ls -td "$REPO_ROOT"/results/*/ 2>/dev/null); do
-        if ls "$d"*/receptions.csv >/dev/null 2>&1; then
+    for d in $(ls -td "$REPO_ROOT"/results/veremi-eval-*/receptions/ 2>/dev/null); do
+        if ls "$d"*.csv >/dev/null 2>&1; then
             echo "${d%/}"
             return
         fi
@@ -196,15 +196,15 @@ build_project_code() {
 # ------------------------------------------------------------------------------
 prepare_project_data() {
     echo ""
-    echo "[*] [Module 4/6] Verifying benchmark receptions ($RECEPTIONS_DIR/*/receptions.csv)..."
+    echo "[*] [Module 4/6] Verifying benchmark receptions ($RECEPTIONS_DIR/*.csv)..."
 
     # The receptions are flattened from the fault-injected subsets; regenerate them when missing
-    COUNT=$(ls -1 "$RECEPTIONS_DIR"/*/receptions.csv 2>/dev/null | wc -l)
+    COUNT=$(ls -1 "$RECEPTIONS_DIR"/*.csv 2>/dev/null | wc -l)
     if [ "$COUNT" -eq 0 ]; then
-        echo "[!] No receptions found. Invoking KEEP_RECEPTIONS=1 scripts/run_preliminary.sh..."
-        (cd "$REPO_ROOT" && KEEP_RECEPTIONS=1 scripts/run_preliminary.sh)
+        echo "[!] No receptions found. Invoking KEEP_RECEPTIONS=1 scripts/veremi_eval.py..."
+        (cd "$REPO_ROOT" && KEEP_RECEPTIONS=1 python3 scripts/veremi_eval.py)
         RECEPTIONS_DIR="$(newest_results)"
-        COUNT=$(ls -1 "$RECEPTIONS_DIR"/*/receptions.csv 2>/dev/null | wc -l)
+        COUNT=$(ls -1 "$RECEPTIONS_DIR"/*.csv 2>/dev/null | wc -l)
     fi
 
     if [ "$COUNT" -eq 0 ]; then
@@ -235,8 +235,8 @@ stage_and_package() {
 
     # 3. Install project trace data: header plus the first DATA_ROWS rows of each subset
     rm -rf bench/data/*
-    for f in "$RECEPTIONS_DIR"/*/receptions.csv; do
-        subset="$(basename "$(dirname "$f")")"
+    for f in "$RECEPTIONS_DIR"/*.csv; do
+        subset="$(basename "$f" .csv)"
         if [ "$DATA_ROWS" = "0" ]; then
             cp -f "$f" "bench/data/$subset.csv"
         else

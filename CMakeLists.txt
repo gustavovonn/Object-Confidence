@@ -24,11 +24,11 @@ add_library(object_confidence STATIC
     src/ObjectConfidenceEngine.cc
     src/Tracker.cc
 )
-target_include_directories(object_confidence PUBLIC
-    ${PROJECT_SOURCE_DIR}/include
+target_include_directories(object_confidence PUBLIC ${PROJECT_SOURCE_DIR}/include)
+target_include_directories(object_confidence SYSTEM PUBLIC
     ${PROJECT_SOURCE_DIR}/libs/v2x-misc/include
+    ${PROJECT_SOURCE_DIR}/libs/eigen
 )
-target_include_directories(object_confidence SYSTEM PUBLIC ${PROJECT_SOURCE_DIR}/libs/eigen)
 target_compile_options(object_confidence PRIVATE -Wall -Wextra)
 target_link_libraries(object_confidence PUBLIC ukf PRIVATE hungarian)
 

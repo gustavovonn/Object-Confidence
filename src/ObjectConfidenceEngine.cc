@@ -1,18 +1,15 @@
 #include "ObjectConfidenceEngine.h"
 
-#include "CoordinatePolicies.h"
+#include "Angles.h"
+#include "Constants.h"
 #include "MechanismConstants.h"
 
+#include <algorithm>
 #include <cmath>
 
 ObjectConfidenceEngine::ObjectConfidenceEngine(EngineParams params)
-    : m_params(params), m_tracker(params), m_scorer(params.forgetting)
+    : m_params(params), m_tracker(params), m_scorer(params.forgetting), m_authorScorer(params.forgetting)
 {
-    m_consistency.speedTolerance = params.speedToleranceMps;
-    m_consistency.minInterFrame = ConstantsConsistency::MIN_INTER_FRAME_TIME;
-    m_consistency.maxInterFrame = ConstantsConsistency::MAX_INTER_FRAME_TIME;
-    m_consistency.frozenSpeed = ConstantsConsistency::FROZEN_SPEED_THRESHOLD;
-    m_consistency.frozenDisplacement = ConstantsConsistency::FROZEN_DISPLACEMENT_MIN;
 }
 
 std::vector<VectorRecord> ObjectConfidenceEngine::onMotionVectors(const std::vector<MotionVector>& vectors,
@@ -23,14 +20,16 @@ std::vector<VectorRecord> ObjectConfidenceEngine::onMotionVectors(const std::vec
     // stale tracks leave before association, so no vector is compared with a dead track
     {
         MaybeStage s(m_timer, "0 retire");
-        for (uint64_t id : m_tracker.retireStaleTracks(now)) {
+        // Paradigm choice: a retired track's evidence is erased, an author's never is (the author scorer grows
+        // with the authors this receiver has heard; forgetting decays it only when new evidence arrives)
+        for (TrackId id : m_tracker.retireStaleTracks(now)) {
             m_scorer.forget(id);
         }
     }
 
     std::vector<VectorRecord> out(vectors.size());
-    std::vector<const MotionVector*> kept;
-    std::vector<std::size_t> keptIndex;
+    std::vector<const MotionVector*> plausibleVectors;
+    std::vector<std::size_t> plausibleIndex;
     {
         MaybeStage s(m_timer, "1 plausibility");
         for (std::size_t i = 0; i < vectors.size(); ++i) {
@@ -42,23 +41,24 @@ std::vector<VectorRecord> ObjectConfidenceEngine::onMotionVectors(const std::vec
             r.objectId = v.objectId;
             r.origin = v.origin;
             r.trueStation = v.trueStation;
+
             if (plausibilityCheck(v)) {
-                kept.push_back(&v);
-                keptIndex.push_back(i);
+                plausibleVectors.push_back(&v);
+                plausibleIndex.push_back(i);
             } else {
                 r.outcome = Outcome::Dropped;
             }
         }
     }
 
-    std::vector<uint64_t> trackOf;
+    std::vector<TrackId> trackIds;
     {
         MaybeStage s(m_timer, "2 associate");
-        trackOf = m_tracker.associate(kept);
+        trackIds = m_tracker.associate(plausibleVectors);
     }
 
-    for (std::size_t k = 0; k < kept.size(); ++k) {
-        process(*kept[k], trackOf[k], out[keptIndex[k]]);
+    for (std::size_t k = 0; k < plausibleVectors.size(); ++k) {
+        process(*plausibleVectors[k], trackIds[k], out[plausibleIndex[k]]);
     }
 
     return out;
@@ -72,50 +72,88 @@ bool ObjectConfidenceEngine::plausibilityCheck(const MotionVector& v) const
 }
 
 /**
- * @brief Simple displacement check consistency between consecutive states
- * @return check result, normalized velocity and excess ratio if failed
+ * @brief Consistency against the track: the reported speed against the track's speed projected to the report
+ * time (speed check), and a moving object reported too close to the track's position at its latest update
+ * (frozen rule). Needs a velocity in the report and in the track; passes without one
+ * @return true when passed
  */
-ConsistencyResult ObjectConfidenceEngine::consistencyCheck(const MotionVector& v) const
+bool ObjectConfidenceEngine::consistencyCheck(const ObjectTrack& track, const MotionVector& v,
+                                              const UKF& predicted) const
 {
-    const SourceBinding* b = m_tracker.binding(v);
-    if (!m_params.enableConsistency || b == nullptr || !v.hasVelocity) {
-        return {};
+    if (!m_params.enableConsistency || !v.hasVelocity || !track.lastHasVelocity) {
+        return true;
     }
-    KinematicState current = b->last;
-    current.lon = v.x;
-    current.lat = v.y;
-    current.speed = v.speed;
-    current.time = v.t;
-    ConsistencyThresholds th = m_consistency;
-    if (m_params.frozenScale > 0.0) {
-        th.frozenDisplacement = m_params.frozenScale * 0.5 * (b->last.speed + current.speed) * (current.time - b->last.time);
+    if (std::abs(v.speed - predicted.x_(2)) > m_params.speedToleranceMps) {
+        return false;
     }
-    return ::consistencyCheck<CartesianCoordinatePolicy>(b->last, current, th);
+    const double dt = std::abs(v.t - track.t);
+    if (!m_params.enableFrozen || dt < ConstantsConsistency::FROZEN_MIN_DT) {
+        return true;
+    }
+    const bool kalman = m_params.enableKalman;
+    const double x = kalman ? track.filter.x_(0) : track.history.back().lon;
+    const double y = kalman ? track.filter.x_(1) : track.history.back().lat;
+    const double speed = 0.5 * (v.speed + (kalman ? track.filter.x_(2) : track.history.back().speed));
+    const bool frozen = speed > ConstantsConsistency::FROZEN_SPEED_THRESHOLD
+                        && std::hypot(v.x - x, v.y - y) < m_params.frozenScale * speed * dt;
+    return !frozen;
+}
+
+/**
+ * @brief The vector's verdict as evidence on its track and, unless ConfidenceMode::Object, on its author; the
+ * vector's confidence is the lower of the two
+ */
+void ObjectConfidenceEngine::score(const MotionVector& v, TrackId trackId, bool passed, VectorRecord& r)
+{
+    const bool author = m_params.confidence != ConfidenceMode::Object;
+    r.objectConfidence = passed ? m_scorer.hit(trackId) : m_scorer.miss(trackId);
+    if (author) {
+        const uint64_t key = getAuthorKey(v);
+        r.authorConfidence = passed ? m_authorScorer.hit(key) : m_authorScorer.miss(key);
+    }
+    r.confidence = author ? std::min(r.objectConfidence, r.authorConfidence) : r.objectConfidence;
+}
+
+// the author, or the author and the container kind (CAM 0, CPM 1) in the lowest bit
+uint64_t ObjectConfidenceEngine::getAuthorKey(const MotionVector& v) const
+{
+    if (m_params.confidence == ConfidenceMode::MinAuthorKind) {
+        return (v.author << 1) | (v.origin == Origin::Cpm ? 1u : 0u);
+    }
+    return v.author;
 }
 
 bool ObjectConfidenceEngine::predictiveCheck(double residual) const
 {
-    return residual <= m_params.maxPosDev;
+    return !m_params.enablePredictive || residual <= m_params.maxPosDev;
 }
 
 /**
  * @brief Pipeline for each single state motion vector: check, associate,
  * update, score
  */
-void ObjectConfidenceEngine::process(const MotionVector& v, uint64_t trackId, VectorRecord& r)
+void ObjectConfidenceEngine::process(const MotionVector& v, TrackId trackId, VectorRecord& r)
 {
-    ObjectTrack* track = trackId != 0 ? m_tracker.find(trackId) : nullptr;
+    ObjectTrack* track = trackId != 0 ? m_tracker.getObjectTrack(trackId) : nullptr;
     double residual = -1.0;
     bool projected = false;
     bool passed = false;
     if (track != nullptr) {
         MaybeStage s(m_timer, "3 checks");
-        projected = m_tracker.residual(*track, v, residual);
+        UKF predicted;
+        m_tracker.project(*track, v.t, predicted);
+        residual = std::hypot(v.x - predicted.x_(0), v.y - predicted.x_(1));
+        projected = std::isfinite(residual);
         if (projected) {
-            const ConsistencyResult consistency = consistencyCheck(v);
-            r.consistencyFailed = consistency.failed;
+            r.consistencyFailed = !consistencyCheck(*track, v, predicted);
+            r.predictiveFailed = !predictiveCheck(residual);
+            if (m_params.recordState) {
+                r.predX = predicted.x_(0);
+                r.predY = predicted.x_(1);
+                r.vhat = predicted.x_(2);
+            }
 
-            passed = predictiveCheck(residual) && !consistency.failed;
+            passed = !r.predictiveFailed && !r.consistencyFailed;
         }
     }
 
@@ -124,16 +162,22 @@ void ObjectConfidenceEngine::process(const MotionVector& v, uint64_t trackId, Ve
         // Creates the new track and starts the UKF
         const ObjectTrack& started = m_tracker.initiateTrack(v);
 
-        m_tracker.bind(v, started.id);
+        m_tracker.setBind(v, started.id);
         r.outcome = Outcome::StartedTrack;
         r.trackId = started.id;
-        r.confidence = m_scorer.confidenceOf(started.id);
+        r.objectConfidence = 1.0;
+        r.confidence = 1.0;
+
+        if (m_params.confidence != ConfidenceMode::Object) {
+            r.authorConfidence = m_authorScorer.getConfidence(getAuthorKey(v));
+            r.confidence = std::min(r.confidence, r.authorConfidence);
+        }
+        recordState(started, r);
         return;
     }
 
     // a source that lost its track to another object of its message is bound again where it is fused
-    const SourceBinding* binding = m_tracker.binding(v);
-    const bool bound = binding != nullptr && binding->trackId == track->id;
+    const bool bound = m_tracker.getTrackId(v) == track->id;
     r.trackId = track->id;
     r.residual = residual;
 
@@ -141,16 +185,43 @@ void ObjectConfidenceEngine::process(const MotionVector& v, uint64_t trackId, Ve
     if (passed) {
         MaybeStage s(m_timer, "4 kalmanUpdate");
         m_tracker.kalmanUpdate(*track, v);
+        if (m_params.recordState && m_params.enableKalman && v.hasVelocity && v.t >= track->t) {  // fused
+            r.nis = track->filter.NIS_laser_;
+        }
         if (!bound) {
-            m_tracker.bind(v, track->id);
+            m_tracker.setBind(v, track->id);
         }
     }
 
     {
         MaybeStage s(m_timer, "5 score");
         r.outcome = passed ? Outcome::Fused : Outcome::Rejected;
-        r.confidence = passed ? m_scorer.hit(r.trackId) : m_scorer.miss(r.trackId);
+        score(v, r.trackId, passed, r);
     }
 
-    m_tracker.recordReport(v);
+    recordState(*track, r);
+}
+
+/**
+ * @brief The track's reference state after a vector (EngineParams::recordState): the filter's, or the latest
+ * accepted report's without the Kalman filter
+ */
+void ObjectConfidenceEngine::recordState(const ObjectTrack& track, VectorRecord& r) const
+{
+    if (!m_params.recordState) {
+        return;
+    }
+    r.stateT = track.t;
+    if (m_params.enableKalman) {
+        r.stateX = track.filter.x_(0);
+        r.stateY = track.filter.x_(1);
+        r.stateV = track.filter.x_(2);
+        r.stateYaw = track.filter.x_(3);
+    } else {
+        const KinematicState& last = track.history.back();
+        r.stateX = last.lon;
+        r.stateY = last.lat;
+        r.stateV = last.speed;
+        r.stateYaw = Angles::wrapPi(Angles::compassToCartesianDeg(last.heading) * ConstantsWGS84::DEG_TO_RAD);
+    }
 }

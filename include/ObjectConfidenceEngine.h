@@ -39,19 +39,25 @@ public:
     // Per-stage timing; null disables it
     void setStageTimer(StageTimer* timer) { m_timer = timer; }
 
+    // tracks the latest message was associated against (after retirement): the receiver's neighbourhood
+    std::size_t liveTracks() const { return m_liveTracks; }
+
 private:
     void recordState(const ObjectTrack& track, VectorRecord& r) const;
     void process(const MotionVector& v, TrackId trackId, VectorRecord& r);
     void score(const MotionVector& v, TrackId trackId, bool passed, VectorRecord& r);
-    uint64_t getAuthorKey(const MotionVector& v) const;
+    static uint64_t getAuthorKindKey(const MotionVector& v);
+    double combine(const VectorRecord& r) const;
 
     EngineParams m_params;
     StageTimer* m_timer = nullptr;
+    std::size_t m_liveTracks = 0;
 
     Tracker m_tracker;
 
     Scorer m_scorer;        // per track
-    Scorer m_authorScorer;  // per author, or author and kind
+    Scorer m_authorScorer;      // per author
+    Scorer m_authorKindScorer;  // per author and container kind
 };
 
 #endif  // OBJECT_CONFIDENCE_ENGINE_H_

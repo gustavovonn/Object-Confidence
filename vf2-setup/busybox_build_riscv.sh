@@ -58,7 +58,7 @@ if [ ! -f "$INSTALL_DIR/bin/busybox" ] || [ "${REBUILD_BUSYBOX:-0}" = "1" ]; the
     sed -i 's/CONFIG_SHA256_HWACCEL=y/# CONFIG_SHA256_HWACCEL is not set/' .config
 
     echo "[*] Compiling and installing static BusyBox..."
-    make ARCH="$ARCH" CROSS_COMPILE="$CROSS_COMPILE" -j"$(nproc)" install
+    make ARCH="$ARCH" CROSS_COMPILE="$CROSS_COMPILE" -j2 install
 
     echo "=============================================================================="
     echo "[+] SUCCESS! Static BusyBox binary installed at:"

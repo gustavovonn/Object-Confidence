@@ -89,6 +89,32 @@ public:
 
     const std::deque<StageStats>& stages() const { return m_stages; }
 
+    // samples taken so far per stage (in stage order): with sumSince, one message's time per stage
+    std::vector<std::size_t> counts() const
+    {
+        std::vector<std::size_t> c;
+        for (const StageStats& s : m_stages) {
+            c.push_back(s.count());
+        }
+        return c;
+    }
+
+    // time of the named stage's samples taken after counts() returned `before` [us]; 0 when none
+    double sumSince(const std::vector<std::size_t>& before, const char* name) const
+    {
+        for (std::size_t i = 0; i < m_stages.size(); ++i) {
+            if (m_stages[i].name == name) {
+                const std::size_t from = i < before.size() ? before[i] : 0;
+                double s = 0.0;
+                for (std::size_t k = from; k < m_stages[i].samples.size(); ++k) {
+                    s += m_stages[i].samples[k];
+                }
+                return s;
+            }
+        }
+        return 0.0;
+    }
+
     static const char* csvHeader() { return "dataset,stage,n,mean_us,p50_us,p99_us,max_us,share_pct"; }
 
     // one row per stage, columns of csvHeader()

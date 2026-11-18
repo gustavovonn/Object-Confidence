@@ -22,8 +22,9 @@ CONFIG_DIR="$SCRIPT_DIR/config"                   # prebuilt kernel Image + devi
 BUSYBOX_DIR="$SCRIPT_DIR/busybox"
 INSTALL_DIR="$BUSYBOX_DIR/_install"
 BUILD_RISCV_DIR="$REPO_ROOT/build-riscv"
-RECEPTIONS_DIR=""                                 # results/veremi-eval-<name>/receptions/<subset>.csv, KEEP_RECEPTIONS=1 scripts/veremi_eval.py
+RECEPTIONS_DIR=""                                 # data/receptions/veremi-eval-<name>/<subset>.csv, KEEP_RECEPTIONS=1 scripts/veremi_eval.py
 DATA_ROWS="${DATA_ROWS:-60000}"                   # receptions rows staged per subset, 0: all
+BENCH_DATA=""                                     # one prepared receptions CSV instead (scripts/select_receivers.py)
 INITRAMFS_CPIO="$SCRIPT_DIR/initramfs.cpio"
 INITRAMFS_GZ="$SCRIPT_DIR/initramfs.cpio.gz"
 TFTP_DIR="${TFTP_DIR:-/srv/tftp}"
@@ -62,6 +63,10 @@ while [ $# -gt 0 ]; do
             RECEPTIONS_DIR="$(realpath "$2")"
             shift 2
             ;;
+        --data)
+            BENCH_DATA="$(realpath "$2")"
+            shift 2
+            ;;
         --skip-tftp)
             SKIP_TFTP=1
             shift
@@ -94,7 +99,8 @@ while [ $# -gt 0 ]; do
             echo "  --rebuild-busybox    Force recompilation of static BusyBox"
             echo "  --rebuild-project    Force clean cross-compilation of C++ replay"
             echo "  --data-rows <N>      Receptions rows staged per subset, 0 for all (default: $DATA_ROWS)"
-            echo "  --results <dir>      receptions dir of scripts/veremi_eval.py, results/veremi-eval-<name>/receptions (default: the newest)"
+            echo "  --results <dir>      receptions dir of scripts/veremi_eval.py, data/receptions/veremi-eval-<name> (default: the newest)"
+            echo "  --data <csv>         stage only this receptions CSV (whole receivers, scripts/select_receivers.py), not the subsets"
             echo "  --skip-tftp          Skip TFTP deployment step entirely"
             echo "  --skip-tftp-network  Deploy TFTP payload without reconfiguring host network"
             echo "  --tftp-dir <path>    Set custom TFTP deploy target (default: $TFTP_DIR)"
@@ -111,9 +117,9 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-# Newest results/veremi-eval-<name>/receptions/ holding <subset>.csv (standard condition: VeReMi sensor errors)
+# Newest data/receptions/veremi-eval-<name>/ holding <subset>.csv (standard condition: VeReMi sensor errors)
 newest_results() {
-    for d in $(ls -td "$REPO_ROOT"/results/veremi-eval-*/receptions/ 2>/dev/null); do
+    for d in $(ls -td "$REPO_ROOT"/data/receptions/veremi-eval-*/ 2>/dev/null); do
         if ls "$d"*.csv >/dev/null 2>&1; then
             echo "${d%/}"
             return
@@ -184,7 +190,7 @@ build_project_code() {
         -DCMAKE_CXX_COMPILER="${CROSS_COMPILE}g++" \
         -DSTATIC_BUILD=ON >/dev/null
 
-    cmake --build "$BUILD_RISCV_DIR" -j"$(nproc)"
+    cmake --build "$BUILD_RISCV_DIR" -j2
 
     echo "[*] Stripping symbols for compact embedded rootfs payload..."
     "${CROSS_COMPILE}strip" -s "$BUILD_RISCV_DIR/replay" -o "$BUILD_RISCV_DIR/replay_stripped"
@@ -196,6 +202,11 @@ build_project_code() {
 # ------------------------------------------------------------------------------
 prepare_project_data() {
     echo ""
+    if [ -n "$BENCH_DATA" ]; then
+        [ -f "$BENCH_DATA" ] || { echo "[!] Error: $BENCH_DATA not found."; exit 1; }
+        echo "[*] [Module 4/6] Benchmark receptions: $BENCH_DATA (whole receivers)"
+        return
+    fi
     echo "[*] [Module 4/6] Verifying benchmark receptions ($RECEPTIONS_DIR/*.csv)..."
 
     # The receptions are flattened from the fault-injected subsets; regenerate them when missing
@@ -235,6 +246,9 @@ stage_and_package() {
 
     # 3. Install project trace data: header plus the first DATA_ROWS rows of each subset
     rm -rf bench/data/*
+    if [ -n "$BENCH_DATA" ]; then
+        cp -f "$BENCH_DATA" "bench/data/$(basename "$BENCH_DATA")"
+    else
     for f in "$RECEPTIONS_DIR"/*.csv; do
         subset="$(basename "$f" .csv)"
         if [ "$DATA_ROWS" = "0" ]; then
@@ -243,6 +257,7 @@ stage_and_package() {
             head -n "$((DATA_ROWS + 1))" "$f" > "bench/data/$subset.csv"
         fi
     done
+    fi
     echo "[+] Staged $(ls -1 bench/data/*.csv 2>/dev/null | wc -l) receptions subset(s) into /bench/data/ ($(du -sh bench/data | cut -f1))"
 
     # 4. Generate Init Script (/init)

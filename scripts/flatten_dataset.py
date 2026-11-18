@@ -14,8 +14,8 @@ from pathlib import Path
 COLUMNS = [
     "kind", "receiver", "rcvTime", "messageID", "sender", "t", "lat", "lon",
     "hasVelocity", "speed", "heading", "yawRate", "length",
-    "objectId", "x", "y", "direction", "trueStation", "attackType",
-]
+    "objectId", "x", "y", "direction", "trueStation", "attackType", "width",
+]  # length, width: the object's (CAM: the sender's) [m]; width last, so older readers still parse the rest
 
 
 def num(value):
@@ -42,15 +42,16 @@ def main():
                     w.writerow(["cam", *head, m["sender"], m["refSimTime"], m["lat"], m["lon"],
                                 int(has_velocity), num(m["speed"]), num(m["heading"]), num(m["yawRate"]),
                                 num(m["vehicleLength"]), -1, "nan", "nan", "nan", m["sender"],
-                                m.get("attackType", 0)])
+                                m.get("attackType", 0), num(m.get("vehicleWidth"))])
                 elif m["lat"] is not None:
                     for o in m["objects"]:
                         has_velocity = o["speed"] is not None and o["direction"] is not None
                         station = o["objectStation"] if o["objectStation"] is not None else -1
                         w.writerow(["cpm", *head, m["sender"], o["measTime"], m["lat"], m["lon"],
-                                    int(has_velocity), num(o["speed"]), "nan", "nan", "nan",
+                                    int(has_velocity), num(o["speed"]), "nan", "nan", num(o.get("length")),
                                     o["objectId"] if o["objectId"] is not None else -1,
-                                    o["x"], o["y"], num(o["direction"]), station, m.get("attackType", 0)])
+                                    o["x"], o["y"], num(o["direction"]), station, m.get("attackType", 0),
+                                    num(o.get("width"))])
 
 
 if __name__ == "__main__":

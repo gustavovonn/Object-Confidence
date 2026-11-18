@@ -25,7 +25,7 @@ import sys
 
 import association_eval
 import veremi_eval
-from common import ROOT, THRESHOLD, calibration_dir, counts, load, metrics, receptions, run, setup
+from common import ROOT, THRESHOLD, calibration_dir, counts, load, metrics, receptions, receptions_dir, run, setup
 
 FROZEN = [0.1, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.75, 1.0]
 RETIRE = [1.0 + 0.5 * i for i in range(9)]
@@ -77,8 +77,10 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     replay = setup()
 
-    receptions(gt, "Honest", out, sensor_errors=True)
-    flat = out / "Honest.csv"
+    rec = receptions_dir("sensitivity", gt)
+    rec.mkdir(parents=True, exist_ok=True)
+    receptions(gt, "Honest", rec, sensor_errors=True)
+    flat = rec / "Honest.csv"
     lines = [f"# Parameter sensitivity: {gt.name}, Honest, VeReMi sensor errors, Kalman, object confidence", "",
              f"FPR: honest vectors flagged (confidence < {THRESHOLD}).", ""]
     for title, flag, values, row, header in SWEEPS:

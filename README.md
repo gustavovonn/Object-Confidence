@@ -1,8 +1,8 @@
 # Object Confidence
 
 Per-object confidence for CAM and CPM motion vectors. Each report is associated to a fused track (Hungarian
-algorithm, elliptical gate), checked against the track's projection (UKF with CTRA; OLS-CTRA without the filter),
-and scored on the track and on its author (Beta reputation).
+algorithm, gated by the vehicles' boxes), checked against the track's projection (UKF-CTRA; OLS-CTRA without the
+filter), and scored on the track and its author (Beta reputation).
 
 ## Setup
 
@@ -12,52 +12,48 @@ cmake -S . -B build && cmake --build build -j2
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ```
 
-Ground truth comes from `libs/Artery-Dataset-Generator`, which has its own README: configs `veremi-val` (validation,
-15:30–15:45) and `veremi-test` (test, 08:00–08:15), on the VeReMi Extension network and demand.
+The ground truth comes from `libs/Artery-Dataset-Generator` (VeReMi Extension network and demand): `veremi-val`
+(15:30–15:45, calibration) and `veremi-test` (08:00–08:15, evaluation).
 
-## Protocol
-
-Calibrate on the validation window. Evaluate on the test window. The calibration scripts refuse the test window.
-
-| Calibration (validation) | Sets |
-|---|---|
-| `scripts/flatten_truth.py <gt> <dir>` + `build/calibrate_ukf <dir> <dir>/ukf_calibration.md` | UKF Q and P0 (`ConstantsUkf`) |
-| `scripts/calib_maxposdev.py` | residual quantiles behind `DEFAULT_MAX_POS_DEV` |
-| `scripts/sensitivity.py` | frozen bound, retirement time and `maxPosDev` sweeps |
+## Reproducing the paper
 
 ```sh
-.venv/bin/python reproduce_paper.py   # evaluation on veremi-test, lowest CPU/I/O priority, one process at a time
+.venv/bin/python reproduce_paper.py   # simulates what is missing, calibrates on val, evaluates on test
 ```
 
 | Step | Script | Output |
 |---|---|---|
-| 1 | `kalman_eval.py` | Kalman vs OLS-CTRA on Honest per white position noise: `results/kalman-eval-<gt>/summary.md` |
-| 2 | `error_diagnosis.py` | confidence drops of two of those cells, physically possible or not: `<cell>/error_diagnosis/` |
-| 3 | `association_eval.py` | association quality of the same cells: `association.md` |
-| 4 | `score_paradigm_ablation.py` | detection, fate, association and ROC on Honest and the 8 VeReMi fault subsets, per confidence paradigm: `results/veremi-eval-<gt>/` |
+| V1 | `flatten_truth.py`, `calibrate_ukf` | UKF Q and P0: `results/calibration/<val>/` |
+| V2 | `calib_maxposdev.py` | predictive bound quantiles: `results/calibration/<val>/` |
+| V3 | `sensitivity.py` | frozen, retire and maxPosDev sweeps: `results/sensitivity-<val>/` |
+| 1 | `kalman_eval.py` | Kalman vs OLS-CTRA per position noise: `results/kalman-eval-<test>/` |
+| 2 | `error_diagnosis.py` | confidence drops, physically possible or not |
+| 3 | `association_eval.py` | association quality |
+| 4 | `score_paradigm_ablation.py` | detection and ROC on Honest and the 8 faults, per paradigm: `results/veremi-eval-<test>/` |
 
-Standard condition: the VeReMi Extension sensor errors, with the UKF position R from their jitter
-(`STANDARD` in `scripts/veremi_eval.py`). Records are kept gzipped (`records.csv.gz`).
+The calibration only writes reports; the values are fixed in `include/MechanismConstants.h`. Calibration
+scripts refuse the test window. `SKIP_VALIDATION=1` skips V1–V3; `JOBS=N` sets the parallel workers (default 3).
+Each script's docstring has its details.
 
-## Latency on the VisionFive 2
+Inputs live in `data/` (git-ignored: ground truth, fault subsets, receptions); `results/` keeps only conclusions.
 
-`replay --profile` reports the latency per engine stage (mean, p50, p99, max), and `--csv-out` appends it as
-CSV. `vf2-setup/vf2_setup.sh` cross-compiles a static `replay`, stages receptions and netboots the board:
+## Cost on the VisionFive 2
 
 ```sh
-KEEP_RECEPTIONS=1 python3 scripts/veremi_eval.py   # keeps results/veremi-eval-<gt>/receptions/<subset>.csv
-./vf2-setup/vf2_setup.sh [--skip-tftp] [--results <receptions dir>]
+build/replay Honest.csv /dev/null --latency-out latency.csv   # neighbourhood per receiver
+scripts/select_receivers.py Honest.csv latency.csv bench.csv --receivers 20
+./vf2-setup/vf2_setup.sh --data bench.csv   # cross-compiles, builds the initramfs, netboots
+# on the board:
+cd /bench && ./run_benchmarks_riscv.sh --core 1 --repeat 3
 ```
 
-On the board: `cd /bench && ./run_benchmarks_riscv.sh [--profile <subset>] [--repeat N] [--core <id>] [--max-msgs N]`.
+`--bands` prints the latency per band of live tracks, per stage:
 
-| Stage | Per | Work |
-|---|---|---|
-| `0 retire` | message | drop stale tracks and their scores |
-| `1 plausibility` | message | finite-value check |
-| `2 associate` | message | linked sources keep their track; the rest by the Hungarian algorithm, gated |
-| `3 checks` | vector with a track | one projection to the vector time; speed, frozen and predictive checks |
-| `4 kalmanUpdate` | fused vector | UKF predict and update; out-of-sequence vectors are not fused |
-| `5 score` | vector | hit or miss on the track and, by `--confidence`, on the author |
-
-`onMotionVectors` times the whole call, including `initiateTrack`.
+| Stage | Work |
+|---|---|
+| retire | drop stale tracks |
+| plausibility | finite-value check |
+| associate | linked sources keep their track; the rest by Hungarian, gated |
+| checks | projection; speed, frozen, predictive |
+| kalmanUpdate | UKF predict and update |
+| score | Beta update of track and author |

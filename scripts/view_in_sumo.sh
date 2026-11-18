@@ -15,7 +15,7 @@ STATION=$1
 T=$2
 LEAD=${3:-3}
 GENERATOR=$(realpath libs/Artery-Dataset-Generator)
-GT=$(realpath "${GT:-$GENERATOR/data/groundtruth/lust-full-run0}")
+GT=$(realpath "${GT:-data/groundtruth/veremi-test-run0}")
 SEED=${SEED:-23423}  # SUMO seed of the generator's runs
 
 SUMO_ID=$(python3 - "$GT/vehicles.jsonl" "$STATION" <<'EOF'

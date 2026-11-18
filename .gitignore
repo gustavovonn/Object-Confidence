@@ -69,6 +69,7 @@ Testing/
 .vscode/
 dataset/
 results/
+data/
 **/__pycache__/**
 docs/
 .venv/

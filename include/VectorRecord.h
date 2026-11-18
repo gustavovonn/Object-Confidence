@@ -29,9 +29,12 @@ struct VectorRecord {
     bool consistencyFailed = false;
     bool predictiveFailed = false;  // residual above maxPosDev
 
-    double confidence = -1.0;      // confidence after this vector (EngineParams::confidence): the lower of the two below
-    double objectConfidence = NAN;  // its track's
-    double authorConfidence = NAN;  // its author's (or author and kind); NaN with ConfidenceMode::Object
+    // confidence after this vector (EngineParams::confidence): the track's, or the lower of the track's and the
+    // author's (or author and kind's); all three are recorded whatever the paradigm
+    double confidence = -1.0;
+    double objectConfidence = NAN;      // its track's
+    double authorConfidence = NAN;      // its author's
+    double authorKindConfidence = NAN;  // its author and container kind's
 
     // track state, filled only with EngineParams::recordState (diagnosis and calibration); NaN when none
     double predX = NAN, predY = NAN;  // track projected to t, before this vector [m]

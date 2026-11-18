@@ -111,11 +111,21 @@ void Tracker::project(const ObjectTrack& track, double t, UKF& out) const
     }
 }
 
+const UKF& Tracker::projected(const ObjectTrack& track, double t) const
+{
+    const auto key = std::make_pair(track.id, t);
+    auto it = m_projections.find(key);
+    if (it == m_projections.end()) {
+        it = m_projections.emplace(key, UKF()).first;
+        project(track, t, it->second);
+    }
+    return it->second;
+}
+
 bool Tracker::residual(const ObjectTrack& track, const MotionVector& v, double& residual, double* along,
                        double* across) const
 {
-    UKF predicted;
-    project(track, v.t, predicted);
+    const UKF& predicted = projected(track, v.t);
     const double dx = v.x - predicted.x_(0);
     const double dy = v.y - predicted.x_(1);
     residual = std::hypot(dx, dy);
@@ -126,6 +136,14 @@ bool Tracker::residual(const ObjectTrack& track, const MotionVector& v, double& 
         *across = -dx * std::sin(yaw) + dy * std::cos(yaw);
     }
     return std::isfinite(residual);
+}
+
+bool Tracker::insideGate(const ObjectTrack& track, const MotionVector& v, double along, double across) const
+{
+    if (track.length > 0.0 && track.width > 0.0 && v.length > 0.0 && v.width > 0.0) {
+        return std::abs(along) <= 0.5 * (track.length + v.length) && std::abs(across) <= 0.5 * (track.width + v.width);
+    }
+    return std::hypot(along / m_params.gateAlong, across / m_params.gateAcross) <= 1.0;
 }
 
 std::vector<TrackId> Tracker::associate(const std::vector<const MotionVector*>& vectors)
@@ -185,7 +203,10 @@ std::vector<TrackId> Tracker::associate(const std::vector<const MotionVector*>& 
     const double infeasible = 1e6;
 
     // Cost matrix, i. e. the residuals between each unbound object and the existing tracks.
-    // Feasible inside an ellipse: gateAlong along the projected track yaw, gateAcross across it
+    // Paradigm choice: feasible when the two bounding boxes overlap, centre to centre along and across the projected
+    // track yaw within half the sum of their lengths and widths: one object, solid bodies do not interpenetrate. No
+    // margin for the position error. Without both sizes, the ellipse of gateAlong (maxPosDev) along and gateAcross
+    // (half a SUMO lane) across
     std::vector<std::vector<double>> cost(unbound.size(), std::vector<double>(m_tracks.size(), infeasible));
     for (std::size_t r = 0; r < unbound.size(); ++r) {
         const MotionVector& v = *vectors[unbound[r]];
@@ -199,9 +220,7 @@ std::vector<TrackId> Tracker::associate(const std::vector<const MotionVector*>& 
             double across = 0.0;
             // euclidean distance between tracks projected in delta time and
             // the incoming object
-            // TODO: we can save computation by projecting the tracks only once per time step, not per object
-            if (residual(m_tracks[c], v, d, &along, &across)
-                && std::hypot(along / m_params.gateAlong, across / m_params.gateAcross) <= 1.0) {
+            if (residual(m_tracks[c], v, d, &along, &across) && insideGate(m_tracks[c], v, along, across)) {
                 cost[r][c] = d;
             }
         }
@@ -221,8 +240,18 @@ std::vector<TrackId> Tracker::associate(const std::vector<const MotionVector*>& 
     return trackOf;
 }
 
+// the size of the latest report that carried one: the track's box in the association gate
+static void keepSize(ObjectTrack& track, const MotionVector& v)
+{
+    if (v.length > 0.0 && v.width > 0.0) {
+        track.length = v.length;
+        track.width = v.width;
+    }
+}
+
 void Tracker::kalmanUpdate(ObjectTrack& track, const MotionVector& v)
 {
+    keepSize(track, v);  // every report that passed the checks, also one not fused below (no velocity, out of sequence)
     // the UKF has no position-only measurement, so a report without velocity is not fused
     if (!v.hasVelocity) {
         return;
@@ -255,6 +284,7 @@ ObjectTrack& Tracker::initiateTrack(const MotionVector& v)
 {
     ObjectTrack track;
     track.id = m_nextId++;  // local ids!
+    keepSize(track, v);
     track.t = v.t;
 
     track.filter.std_jerk_ = m_params.stdJerk;

@@ -8,14 +8,15 @@ Usage: [BUILD=build] [KEEP_RECEPTIONS=1] veremi_eval.py [ground truth dir] [--va
 Default ground truth: the test window (common.default_gt, veremi-test); default variant: kalman.
 
 Each subset is made and flattened (common.receptions) with the generator's sensor errors kept
-(VeReMi Extension Sec. IV-B, libs/Artery-Dataset-Generator/scripts/inject_faults.py), replayed once per mode
-with the variant's flags, --confidence and --meas-noise VEREMI_JITTER, and its receptions deleted (kept with
-KEEP_RECEPTIONS=1, in results/veremi-eval-<ground truth name>/receptions/, for vf2-setup/); then each
+(VeReMi Extension Sec. IV-B, libs/Artery-Dataset-Generator/scripts/inject_faults.py), replayed once
+with the variant's flags and --meas-noise VEREMI_JITTER, once for every mode (the replay records the track's, the
+author's and the author and kind's confidence; each mode combines them, common.with_paradigm), and its receptions deleted (kept with
+KEEP_RECEPTIONS=1, in data/receptions/veremi-eval-<ground truth name>/, for vf2-setup/); then each
 mode's run is scored.
 One process at a time, at the lowest CPU and I/O priority.
 
 Writes results/veremi-eval-<ground truth name>/<variant>-<confidence>/ (laid out as results/<run>/):
-  <subset>/records.csv   build/replay
+  <subset>/records.csv.gz   link to <variant>-records/<subset>/records.csv.gz, the subset's one build/replay
   table.md               detection_table(): F1, FPR, accuracy, precision, recall per subset (common.metrics), over
                          all vectors, CAMs and CPM objects; Honest first, out of the total over the fault subsets
   fate.md                fate_table(): where the faulty vectors go, and the share of each fate flagged
@@ -36,15 +37,20 @@ flagged: honest observers of the same object keep a track's confidence up when t
 """
 import csv
 import math
+import multiprocessing
 import os
 import subprocess
 import sys
+from pathlib import Path
 from collections import Counter, defaultdict
 
 import association_eval
 import kalman_eval
-from common import (RETIRE_AFTER, ROOT, SUBSETS, THRESHOLD, compress, counts, ground_truth_dir, load, metrics,
-                    open_records, option, receptions, records_path, run, setup, stream)
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+
+from common import (JOBS, RETIRE_AFTER, ROOT, SUBSETS, THRESHOLD, compress, counts, ground_truth_dir, load, metrics,
+                    open_records, option, receptions, receptions_dir, records_path, run, setup, stream,
+                    wait_for_memory)
 
 FLAGS = dict(kalman_eval.VARIANTS)
 CONFIDENCE = ["object", "author", "author-kind"]  # replay --confidence
@@ -76,35 +82,34 @@ def owners(path):
     return honest
 
 
-def fates(path):
+def fates(path, paradigm=None):
     honest = owners(path)
     count, flagged = Counter(), Counter()
     diluted = defaultdict(lambda: [0, 0])  # band -> [flagged, n]
     last = defaultdict(dict)               # track -> source -> latest fused time
-    with open_records(path) as f:
-        for r in csv.DictReader(f):
-            track, source, t = (r["receiver"], r["trackId"]), (r["author"], r["objectId"]), float(r["t"])
-            if r["attackType"] != "0":
-                if r["outcome"] == "dropped":
-                    fate = "dropped"
+    for r in stream(path, paradigm):
+        track, source, t = (r["receiver"], r["trackId"]), (r["author"], r["objectId"]), float(r["t"])
+        if r["attackType"] != "0":
+            if r["outcome"] == "dropped":
+                fate = "dropped"
+            else:
+                h = honest.get(track, Counter())
+                if h[r["trueStation"]] == 0:
+                    fate = "4 ghost track"
+                elif h.most_common(1)[0][0] != r["trueStation"]:
+                    fate = "3 wrong track"
                 else:
-                    h = honest.get(track, Counter())
-                    if h[r["trueStation"]] == 0:
-                        fate = "4 ghost track"
-                    elif h.most_common(1)[0][0] != r["trueStation"]:
-                        fate = "3 wrong track"
-                    else:
-                        fate = "1 right, rejected" if r["outcome"] == "rejected" else "2 right, accepted"
-                flag = float(r["confidence"]) < THRESHOLD
-                count[fate] += 1
-                flagged[fate] += flag
-                if fate == "1 right, rejected":
-                    n = sum(1 for s, lt in last[track].items() if s != source and t - lt <= RETIRE_AFTER)
-                    band = "0" if n == 0 else "1-2" if n <= 2 else "3+"
-                    diluted[band][0] += flag
-                    diluted[band][1] += 1
-            if r["outcome"] in ("fused", "started"):
-                last[track][source] = t
+                    fate = "1 right, rejected" if r["outcome"] == "rejected" else "2 right, accepted"
+            flag = float(r["confidence"]) < THRESHOLD
+            count[fate] += 1
+            flagged[fate] += flag
+            if fate == "1 right, rejected":
+                n = sum(1 for s, lt in last[track].items() if s != source and t - lt <= RETIRE_AFTER)
+                band = "0" if n == 0 else "1-2" if n <= 2 else "3+"
+                diluted[band][0] += flag
+                diluted[band][1] += 1
+        if r["outcome"] in ("fused", "started"):
+            last[track][source] = t
     return count, flagged, diluted
 
 
@@ -122,13 +127,13 @@ def table_row(name, c):
         name, tp + fp + tn + fn, tp + fn, fmt(f1, 4), fmt(fpr, 2), fmt(accuracy, 2), fmt(precision, 2), fmt(recall, 2))
 
 
-def detection_table(run):
+def detection_table(run, paradigm=None):
     """table.md of a run dir (<subset>/records.csv): one table per origin; `-` when undefined (no positives: speed
     faults never reach a CPM); counts summed over the subset. Subsets without records.csv are left out."""
     per = {}  # {subset: {origin: counts}}, one subset in memory at a time
     for subset in SUBSETS:
         if records_path(run / subset / "records.csv"):
-            rows = load(run / subset / "records.csv")
+            rows = load(run / subset / "records.csv", paradigm)
             per[subset] = {origin: counts(rows, origin) for _, origin in ORIGINS}
     lines = []
     for title, origin in ORIGINS:
@@ -147,7 +152,7 @@ def detection_table(run):
     return per
 
 
-def fate_table(run):
+def fate_table(run, paradigm=None):
     """fate.md of a run dir (<subset>/records.csv), see the module docstring; streaming, each records.csv read
     twice."""
     per = {}  # {subset: (count, flagged)} per fate
@@ -160,7 +165,7 @@ def fate_table(run):
         path = run / subset / "records.csv"
         if not records_path(path):
             continue
-        count, flagged, diluted = fates(path)
+        count, flagged, diluted = fates(path, paradigm)
         per[subset] = (count, flagged)
         n = sum(count.values())
         cells = [f"{100 * count[f] / n:.1f} ({100 * flagged[f] / count[f]:.0f})" if count[f] else "0" for f in FATES]
@@ -209,7 +214,7 @@ def area(points, max_fpr=1.0):
     return total / max_fpr
 
 
-def roc_table(run, title):
+def roc_table(run, title, paradigm=None):
     """roc.md and roc.png of a run dir: per fault subset and scope, the AUC, the mean recall over FPR <= LOW_FPR
     and the operating point at THRESHOLD; returns {subset: {scope: (AUC, mean recall at low FPR)}}."""
     per, curves = {}, {}
@@ -226,7 +231,7 @@ def roc_table(run, title):
             if not records_path(path):
                 continue
             tally = defaultdict(lambda: [0, 0])  # confidence -> [honest, faulty]
-            for r in stream(path):
+            for r in stream(path, paradigm):
                 if r["outcome"] != "dropped" and origin in (None, r["origin"]):
                     tally[float(r["confidence"])][r["attackType"] != "0"] += 1
             negatives = sum(n for n, _ in tally.values())
@@ -294,30 +299,53 @@ def roc_figure(curves, path, title):
 def evaluate(gt, variant, modes):
     """Replays the 9 subsets per mode and scores them; returns {mode: (detection counts, fates, ROC areas)}, as
     detection_table(), fate_table() and roc_table() return them."""
-    rec = ROOT / "results" / f"veremi-eval-{gt.name}" / "receptions"
+    rec = receptions_dir("veremi-eval", gt)
     rec.mkdir(parents=True, exist_ok=True)
     replay = setup()
 
-    for subset in SUBSETS:
-        print(subset, flush=True)
+    def prepare(subset):
+        """Made, flattened, replayed once and linked into every mode's dir; the subsets are independent, JOBS at
+        a time (each worker's heavy work is in its own processes: injection, flatten, replay)."""
+        wait_for_memory()
+        print(f"{subset}: start", flush=True)
         receptions(gt, subset, rec, sensor_errors=True)
         flat = rec / f"{subset}.csv"
+        # one replay serves every mode: the modes differ only in how the recorded confidences combine
+        shared = out_dir(gt, variant, "records") / subset
+        shared.mkdir(parents=True, exist_ok=True)
+        (shared / "records.csv.gz").unlink(missing_ok=True)
+        run([replay, flat, shared / "records.csv", *FLAGS[variant], *STANDARD], stdout=subprocess.DEVNULL)
+        compress(shared / "records.csv")
         for mode in modes:
             cell = out_dir(gt, variant, mode) / subset
             cell.mkdir(parents=True, exist_ok=True)
-            run([replay, flat, cell / "records.csv", *FLAGS[variant], "--confidence", mode, *STANDARD],
-                stdout=subprocess.DEVNULL)
-            compress(cell / "records.csv")
+            for name in ("records.csv", "records.csv.gz"):
+                (cell / name).unlink(missing_ok=True)
+            (cell / "records.csv.gz").symlink_to(Path("..") / ".." / shared.parent.name / subset / "records.csv.gz")
         if os.environ.get("KEEP_RECEPTIONS") != "1":
             flat.unlink()
+        print(f"{subset}: replayed", flush=True)
 
-    return {mode: score(out_dir(gt, variant, mode), f"{variant}, {mode} confidence") for mode in modes}
+    with ThreadPoolExecutor(JOBS) as pool:
+        list(pool.map(prepare, SUBSETS))  # list(): re-raises a worker's failure
+
+    # the modes are scored in parallel processes (pure Python, CPU-bound), each streaming its records
+    with ProcessPoolExecutor(min(JOBS, len(modes)), mp_context=multiprocessing.get_context("fork")) as pool:
+        results = pool.map(score_mode, [(gt, variant, mode) for mode in modes])
+        return dict(zip(modes, results))
 
 
-def score(run, title):
-    """table.md, fate.md, association.md, roc.md and roc.png of a run dir; (detection counts, fates, ROC areas)."""
+def score_mode(job):
+    gt, variant, mode = job
+    wait_for_memory()
+    return score(out_dir(gt, variant, mode), f"{variant}, {mode} confidence", mode)
+
+
+def score(run, title, paradigm=None):
+    """table.md, fate.md, association.md, roc.md and roc.png of a run dir, with paradigm's confidence
+    (common.with_paradigm); (detection counts, fates, ROC areas)."""
     (run / "association.md").write_text(association_eval.table(run))
-    return detection_table(run), fate_table(run), roc_table(run, title)
+    return detection_table(run, paradigm), fate_table(run, paradigm), roc_table(run, title, paradigm)
 
 
 def main():

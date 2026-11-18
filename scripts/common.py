@@ -11,6 +11,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 GENERATOR = ROOT / "libs" / "Artery-Dataset-Generator"
+# Data, outside the submodules (which a re-clone would wipe) and apart from results/: the generator's ground truth and
+# SUMO logs (its container mounts this as its data/, scripts/setup_docker.sh DATA_DIR), the fault-injected subsets
+# and the flattened receptions the replay reads. results/ holds only what the experiments conclude
+DATA = ROOT / "data"
 PYTHON = ROOT / ".venv" / "bin" / "python"  # error_diagnosis.py needs matplotlib (requirements.txt)
 SUBSETS = ["Honest", "ConstPos", "ConstPosOffset", "RandomPos", "RandomPosOffset",
            "ConstSpeed", "ConstSpeedOffset", "RandomSpeed", "RandomSpeedOffset"]  # the fault-free baseline first
@@ -30,8 +34,8 @@ def sumo_clock(run):
     meta = json.loads((run / "metadata.json").read_text())
     if not (run / "config" / "omnetpp.ini").exists() and "injection" in meta:
         run = Path(meta["injection"]["source"])  # a subset: its ground-truth run
-        if not run.is_absolute():
-            run = GENERATOR / run
+        if not (run / "metadata.json").is_file():
+            run = DATA / "groundtruth" / run.name  # recorded before the data moved
     sections, name = {}, None
     for line in (run / "config" / "omnetpp.ini").read_text().splitlines():
         line = line.split("#", 1)[0].strip()
@@ -86,25 +90,39 @@ def open_records(path):
     return gzip.open(found, "rt", newline="") if found.suffix == ".gz" else open(found, newline="")
 
 
-def stream(path):
-    """The rows of a records.csv (or its gzip), one at a time."""
+# Confidence paradigm (replay --confidence) -> author column its confidence takes the lower of with the track's
+PARADIGM_COLUMNS = {"object": None, "author": "authorConfidence", "author-kind": "authorKindConfidence"}
+
+
+def with_paradigm(r, paradigm):
+    """r with its confidence as paradigm reports it, from the three the replay records whatever its --confidence:
+    the track's, or the lower of the track's and the author's (author and kind's), as the engine combines them."""
+    column = PARADIGM_COLUMNS[paradigm]
+    if r["outcome"] != "dropped":
+        r["confidence"] = r["objectConfidence"] if column is None else min(r["objectConfidence"], r[column], key=float)
+    return r
+
+
+def stream(path, paradigm=None):
+    """The rows of a records.csv (or its gzip), one at a time; with paradigm, its confidence (with_paradigm)."""
     with open_records(path) as f:
-        yield from csv.DictReader(f)
+        for r in csv.DictReader(f):
+            yield r if paradigm is None else with_paradigm(r, paradigm)
 
 
 class Rows:
     """The rows of a records.csv, streamed again on every iteration: several passes without holding the file
-    in memory (a test-window run has ~10^7 rows); keep filters them."""
+    in memory (a test-window run has ~10^7 rows); keep filters them, paradigm as in stream."""
 
-    def __init__(self, path, keep=None):
-        self.path, self.keep = path, keep
+    def __init__(self, path, keep=None, paradigm=None):
+        self.path, self.keep, self.paradigm = path, keep, paradigm
 
     def __iter__(self):
-        return (r for r in stream(self.path) if self.keep is None or self.keep(r))
+        return (r for r in stream(self.path, self.paradigm) if self.keep is None or self.keep(r))
 
 
-def load(path):
-    return Rows(path)
+def load(path, paradigm=None):
+    return Rows(path, paradigm=paradigm)
 
 
 def compress(path):
@@ -171,12 +189,12 @@ VALIDATION_CONFIG = "veremi-val"   # 15:30-15:45, calibration and parameter choi
 def default_gt():
     """The generator's ground truth of config CONFIG (default TEST_CONFIG), run RUN (default 0)."""
     config, seed = os.environ.get("CONFIG", TEST_CONFIG), os.environ.get("RUN", "0")
-    return GENERATOR / "data" / "groundtruth" / f"{config}-run{seed}"
+    return DATA / "groundtruth" / f"{config}-run{seed}"
 
 
 def validation_gt():
     """The generator's ground truth of VALIDATION_CONFIG, run RUN (default 0)."""
-    return GENERATOR / "data" / "groundtruth" / f"{VALIDATION_CONFIG}-run{os.environ.get('RUN', '0')}"
+    return DATA / "groundtruth" / f"{VALIDATION_CONFIG}-run{os.environ.get('RUN', '0')}"
 
 
 def ground_truth_dir(args):
@@ -200,6 +218,21 @@ def run(cmd, **kw):
     subprocess.run([str(c) for c in cmd], check=True, **kw)
 
 
+JOBS = int(os.environ.get("JOBS", "3"))  # parallel workers of the per-subset work (scripts/veremi_eval.py)
+MIN_FREE_MB = 800  # a worker starts its next unit only with this much memory available
+
+
+def wait_for_memory():
+    """Blocks while MemAvailable is below MIN_FREE_MB, so parallel workers never push the machine into swap."""
+    import time
+    while True:
+        with open("/proc/meminfo") as f:
+            free = next(int(line.split()[1]) // 1024 for line in f if line.startswith("MemAvailable:"))
+        if free >= MIN_FREE_MB:
+            return
+        time.sleep(10)
+
+
 def low_priority():
     """Lowest CPU and I/O priority for this process and its children."""
     os.nice(19)
@@ -212,18 +245,23 @@ def setup():
     return build(Path(os.environ.get("BUILD", ROOT / "build")).resolve())
 
 
-def build(build_dir):
-    """Configures and builds replay in build_dir, two jobs at most; returns its path."""
+def build(build_dir, target="replay"):
+    """Configures and builds target (default replay) in build_dir, two jobs at most; returns its path."""
     run(["cmake", "-S", ROOT, "-B", build_dir], stdout=subprocess.DEVNULL)
-    run(["cmake", "--build", build_dir, "--target", "replay", "-j2"], stdout=subprocess.DEVNULL)
-    return build_dir / "replay"
+    run(["cmake", "--build", build_dir, "--target", target, "-j2"], stdout=subprocess.DEVNULL)
+    return build_dir / target
+
+
+def receptions_dir(experiment, gt):
+    """Where an experiment's flattened receptions (the replay's input) and their faults.toml go."""
+    return DATA / "receptions" / f"{experiment}-{Path(gt).name}"
 
 
 def receptions(gt, subset, out, sensor_errors=False):
     """The subset of ground truth gt (faults injected, receiver view), flattened to <out>/<subset>.csv; with
     sensor_errors, the generator's VeReMi Extension sensor errors ([sensor_errors] of its faults.toml) are kept.
     Returns the generator's subset dir."""
-    target = GENERATOR / "data" / "subsets" / f"{gt.name}-{subset}{'-sensor-errors' if sensor_errors else ''}"
+    target = DATA / "subsets" / f"{gt.name}-{subset}{'-sensor-errors' if sensor_errors else ''}"
     shutil.rmtree(target, ignore_errors=True)
     text = (GENERATOR / "config" / "faults.toml").read_text()
     text = re.sub(r'^input = .*$', f'input = "{gt}"', text, flags=re.M)

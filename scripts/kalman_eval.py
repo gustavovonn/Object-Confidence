@@ -18,7 +18,7 @@ import os
 import subprocess
 import sys
 
-from common import ROOT, compress, counts, ground_truth_dir, option, receptions, run, setup, stream
+from common import ROOT, compress, counts, ground_truth_dir, option, receptions, receptions_dir, run, setup, stream
 
 SIGMAS = [0.0, 0.1, 0.3]  # white position noise per axis [m]
 VARIANTS = [("kalman", []), ("no-kalman", ["--no-kalman"])]
@@ -37,7 +37,7 @@ def cell_dir(gt, variant, sigma):
 
 
 def noised(gt, sigma):
-    return out_dir(gt) / "receptions" / f"Honest-{tag(sigma)}.csv"
+    return receptions_dir("kalman-eval", gt) / f"Honest-{tag(sigma)}.csv"
 
 
 def honest_rates(path):
@@ -52,7 +52,7 @@ def main():
     sigmas = [float(s) for s in option(args, "--sigmas", ",".join(map(str, SIGMAS))).split(",")]
     gt = ground_truth_dir(args)
     out = out_dir(gt)
-    rec = out / "receptions"
+    rec = receptions_dir("kalman-eval", gt)
     rec.mkdir(parents=True, exist_ok=True)
     replay = setup()
 

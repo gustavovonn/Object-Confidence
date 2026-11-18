@@ -24,6 +24,7 @@ struct CamReport {
     double speed = 0.0;        // [m/s]
     double headingDeg = 0.0;   // clockwise from true north
     double length = 0.0;       // [m], <= 0 when unavailable
+    double width = 0.0;        // [m], <= 0 when unavailable
 };
 
 // One PerceivedObject of a CPM (ETSI TS 103 324 V2.1.1, clause 7.1.8)
@@ -38,6 +39,8 @@ struct CpmObjectReport {
     bool hasVelocity = false;
     double speed = 0.0;        // velocityMagnitude [m/s]
     double directionDeg = 0.0; // velocityDirection, counter-clockwise from East
+    double length = 0.0;       // objectDimensionX [m], <= 0 when unavailable
+    double width = 0.0;        // objectDimensionY [m], <= 0 when unavailable
     int64_t objectStation = -1; // oracle
 };
 
@@ -59,6 +62,8 @@ inline MotionVector fromCam(const CamReport& cam, const LocalTangentPlane& plane
     v.origin = Origin::Cam;
     v.t = cam.t;
     v.trueStation = static_cast<int64_t>(cam.sender);
+    v.length = cam.length;
+    v.width = cam.width;
 
     PlanarVector front;
     plane.toLocal(cam.lat, cam.lon, front.east, front.north);
@@ -94,6 +99,8 @@ inline MotionVector fromCpmObject(const CpmObjectReport& obj, const LocalTangent
     v.origin = Origin::Cpm;
     v.t = obj.t;
     v.trueStation = obj.objectStation;
+    v.length = obj.length;
+    v.width = obj.width;
 
     PlanarVector sender;
     plane.toLocal(obj.senderLat, obj.senderLon, sender.east, sender.north);

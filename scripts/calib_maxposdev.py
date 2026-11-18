@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 import veremi_eval
-from common import ROOT, calibration_dir, engine_constant, receptions, run, setup, stream
+from common import ROOT, calibration_dir, engine_constant, receptions, receptions_dir, run, setup, stream
 
 QUANTILES = [99.0 + 0.1 * i for i in range(10)] + [99.95, 99.99, 100.0]
 BANDS = [(0.0, 1.0), (1.0, 2.0), (2.0, 5.0), (5.0, 10.0), (10.0, math.inf)]  # v * |dt| [m]
@@ -57,8 +57,10 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     replay = setup()
 
-    receptions(gt, "Honest", out, sensor_errors=True)
-    flat, records = out / "Honest.csv", out / "records.csv"
+    rec = receptions_dir("calibration", gt)
+    rec.mkdir(parents=True, exist_ok=True)
+    receptions(gt, "Honest", rec, sensor_errors=True)
+    flat, records = rec / "Honest.csv", out / "records.csv"
     run([replay, flat, records, "--no-predictive", "--state", *veremi_eval.STANDARD], stdout=subprocess.DEVNULL)
     flat.unlink()
     rows = residuals(records)

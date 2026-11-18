@@ -24,6 +24,9 @@ struct MotionVector {
     double speed = 0.0;      // [m/s]
     double heading = 0.0;    // [rad]
 
+    double length = 0.0;     // the object's [m]; <= 0 when unavailable
+    double width = 0.0;      // [m]; <= 0 when unavailable
+
     int64_t trueStation = -1;  // oracle, evaluation only
 };
 

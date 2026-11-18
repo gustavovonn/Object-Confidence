@@ -8,7 +8,8 @@
 #include <cmath>
 
 ObjectConfidenceEngine::ObjectConfidenceEngine(EngineParams params)
-    : m_params(params), m_tracker(params), m_scorer(params.forgetting), m_authorScorer(params.forgetting)
+    : m_params(params), m_tracker(params), m_scorer(params.forgetting), m_authorScorer(params.forgetting),
+      m_authorKindScorer(params.forgetting)
 {
 }
 
@@ -26,6 +27,10 @@ std::vector<VectorRecord> ObjectConfidenceEngine::onMotionVectors(const std::vec
             m_scorer.forget(id);
         }
     }
+
+    // projections of the previous message are stale: tracks were updated and time moved on
+    m_tracker.clearProjections();
+    m_liveTracks = m_tracker.tracks().size();
 
     std::vector<VectorRecord> out(vectors.size());
     std::vector<const MotionVector*> plausibleVectors;
@@ -100,27 +105,33 @@ bool ObjectConfidenceEngine::consistencyCheck(const ObjectTrack& track, const Mo
 }
 
 /**
- * @brief The vector's verdict as evidence on its track and, unless ConfidenceMode::Object, on its author; the
- * vector's confidence is the lower of the two
+ * @brief The vector's verdict as evidence on its track, its author and its author and kind, whatever the paradigm:
+ * the paradigms differ only in the confidence they report (combine), so one run records all three
  */
 void ObjectConfidenceEngine::score(const MotionVector& v, TrackId trackId, bool passed, VectorRecord& r)
 {
-    const bool author = m_params.confidence != ConfidenceMode::Object;
     r.objectConfidence = passed ? m_scorer.hit(trackId) : m_scorer.miss(trackId);
-    if (author) {
-        const uint64_t key = getAuthorKey(v);
-        r.authorConfidence = passed ? m_authorScorer.hit(key) : m_authorScorer.miss(key);
-    }
-    r.confidence = author ? std::min(r.objectConfidence, r.authorConfidence) : r.objectConfidence;
+    r.authorConfidence = passed ? m_authorScorer.hit(v.author) : m_authorScorer.miss(v.author);
+    const uint64_t kindKey = getAuthorKindKey(v);
+    r.authorKindConfidence = passed ? m_authorKindScorer.hit(kindKey) : m_authorKindScorer.miss(kindKey);
+    r.confidence = combine(r);
 }
 
-// the author, or the author and the container kind (CAM 0, CPM 1) in the lowest bit
-uint64_t ObjectConfidenceEngine::getAuthorKey(const MotionVector& v) const
+// the author and the container kind (CAM 0, CPM 1) in the lowest bit
+uint64_t ObjectConfidenceEngine::getAuthorKindKey(const MotionVector& v)
 {
-    if (m_params.confidence == ConfidenceMode::MinAuthorKind) {
-        return (v.author << 1) | (v.origin == Origin::Cpm ? 1u : 0u);
+    return (v.author << 1) | (v.origin == Origin::Cpm ? 1u : 0u);
+}
+
+// the confidence of EngineParams::confidence: the track's, or the lower of the track's and the author's (or author
+// and kind)
+double ObjectConfidenceEngine::combine(const VectorRecord& r) const
+{
+    switch (m_params.confidence) {
+        case ConfidenceMode::MinAuthor: return std::min(r.objectConfidence, r.authorConfidence);
+        case ConfidenceMode::MinAuthorKind: return std::min(r.objectConfidence, r.authorKindConfidence);
+        default: return r.objectConfidence;
     }
-    return v.author;
 }
 
 bool ObjectConfidenceEngine::predictiveCheck(double residual) const
@@ -140,8 +151,7 @@ void ObjectConfidenceEngine::process(const MotionVector& v, TrackId trackId, Vec
     bool passed = false;
     if (track != nullptr) {
         MaybeStage s(m_timer, "3 checks");
-        UKF predicted;
-        m_tracker.project(*track, v.t, predicted);
+        const UKF& predicted = m_tracker.projected(*track, v.t);
         residual = std::hypot(v.x - predicted.x_(0), v.y - predicted.x_(1));
         projected = std::isfinite(residual);
         if (projected) {
@@ -165,13 +175,11 @@ void ObjectConfidenceEngine::process(const MotionVector& v, TrackId trackId, Vec
         m_tracker.setBind(v, started.id);
         r.outcome = Outcome::StartedTrack;
         r.trackId = started.id;
+        // a new track starts trusted and adds no evidence: its confidence is its author's
         r.objectConfidence = 1.0;
-        r.confidence = 1.0;
-
-        if (m_params.confidence != ConfidenceMode::Object) {
-            r.authorConfidence = m_authorScorer.getConfidence(getAuthorKey(v));
-            r.confidence = std::min(r.confidence, r.authorConfidence);
-        }
+        r.authorConfidence = m_authorScorer.getConfidence(v.author);
+        r.authorKindConfidence = m_authorKindScorer.getConfidence(getAuthorKindKey(v));
+        r.confidence = combine(r);
         recordState(started, r);
         return;
     }

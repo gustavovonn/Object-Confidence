@@ -100,6 +100,9 @@ if [ ! -x "$BIN" ]; then
     exit 1
 fi
 
+# the standard condition: UKF position R from the VeReMi jitter (VEREMI_JITTER, scripts/veremi_eval.py STANDARD)
+MEAS_NOISE="${MEAS_NOISE:-0.1}"
+
 DATASETS=""
 if [ -n "$DATA_DIR" ] || [ -d "$SCRIPT_DIR/data" ]; then
     [ -z "$DATA_DIR" ] && DATA_DIR="$SCRIPT_DIR/data"
@@ -108,7 +111,7 @@ if [ -n "$DATA_DIR" ] || [ -d "$SCRIPT_DIR/data" ]; then
     done
 else
     # host: the newest receptions kept by KEEP_RECEPTIONS=1 scripts/veremi_eval.py
-    for d in $(ls -td "$REPO_ROOT"/results/veremi-eval-*/receptions/ 2>/dev/null); do
+    for d in $(ls -td "$REPO_ROOT"/data/receptions/veremi-eval-*/ 2>/dev/null); do
         for f in "$d"*.csv; do
             [ -f "$f" ] && DATASETS="$DATASETS $f"
         done
@@ -193,21 +196,23 @@ run_bench() {
     while [ "$_run" -le "$REPEAT" ]; do
         printf "[-] [%-18s] run %s/%s ... " "$_subset" "$_run" "$REPEAT"
         _status=0
+        # --bands: latency per band of live tracks (the receiver's neighbourhood), printed below for copying
         _out=$($CMD_PREFIX "$BIN" "$_data" /dev/null --max-msgs "$MAX_MSGS" --csv-out "$CSV_OUT" \
-            --dataset "$_subset" 2>&1) || _status=$?
+            --dataset "$_subset" --bands --meas-noise "$MEAS_NOISE" 2>&1) || _status=$?
         if [ $_status -ne 0 ]; then
             echo "FAILED (exit code $_status)!"
             echo "$_out" | sed 's/^/    /'
             exit 1
         fi
         echo "Done."
+        echo "$_out" | sed -n '/latency per band of live tracks/,/^slope over/p'
         _run=$((_run + 1))
     done
 }
 
 for f in $DATASETS; do
     # Warm-up pass (discarded)
-    $CMD_PREFIX "$BIN" "$f" /dev/null --max-msgs 1000 >/dev/null 2>&1 || true
+    $CMD_PREFIX "$BIN" "$f" /dev/null --max-msgs 1000 --meas-noise "$MEAS_NOISE" >/dev/null 2>&1 || true
     run_bench "$f"
 done
 

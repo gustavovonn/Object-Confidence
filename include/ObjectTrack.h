@@ -19,7 +19,8 @@ struct ObjectTrack {
     // without the filter (EngineParams::enableKalman off): the latest accepted reports, the OLS window of the
     // history-aware CTRA
     std::deque<KinematicState> history;
-    bool lastHasVelocity = false;  // a fused report carried a velocity: the track has a speed to check against
+    bool lastHasVelocity = false;
+    double length = 0.0, width = 0.0;  // [m], of the latest fused (or starting) report that carried them; 0 unknown  // a fused report carried a velocity: the track has a speed to check against
 };
 
 #endif  // OBJECT_TRACK_H_
